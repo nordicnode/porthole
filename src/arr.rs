@@ -21,6 +21,11 @@ struct Arr {
     /// "sonarr" / "radarr" — config dir + container + category.
     id: &'static str,
     port: u16,
+    /// API version path: "v3" for Sonarr/Radarr/Sportarr, "v1" for Lidarr.
+    api: &'static str,
+    /// Download-client category field name.
+    cat_field: &'static str,
+    cat_imported_field: &'static str,
 }
 
 const ARRS: &[Arr] = &[
@@ -28,15 +33,41 @@ const ARRS: &[Arr] = &[
         name: "Sonarr",
         id: "sonarr",
         port: 8989,
+        api: "v3",
+        cat_field: "tvCategory",
+        cat_imported_field: "tvImportedCategory",
     },
     Arr {
         name: "Radarr",
         id: "radarr",
         port: 7878,
+        api: "v3",
+        cat_field: "movieCategory",
+        cat_imported_field: "movieImportedCategory",
     },
 ];
 
-fn api_get(port: u16, api_key: &str, path: &str) -> Result<String> {
+/// Extra *arrs, wired only when the user opted in.
+const EXTRA_ARRS: &[Arr] = &[
+    Arr {
+        name: "Lidarr",
+        id: "lidarr",
+        port: 8686,
+        api: "v1", // Lidarr v2 is API v1, not v3!
+        cat_field: "musicCategory",
+        cat_imported_field: "musicImportedCategory",
+    },
+    Arr {
+        name: "Sportarr",
+        id: "sportarr",
+        port: 1867,
+        api: "v3", // Sonarr-API-compatible
+        cat_field: "tvCategory",
+        cat_imported_field: "tvImportedCategory",
+    },
+];
+
+fn api_get(port: u16, api_key: &str, api: &str, path: &str) -> Result<String> {
     let out = Command::new("curl")
         .args([
             "-sf",
@@ -46,7 +77,7 @@ fn api_get(port: u16, api_key: &str, path: &str) -> Result<String> {
             "20",
             "-H",
             &format!("X-Api-Key: {api_key}"),
-            &format!("http://localhost:{port}{path}"),
+            &format!("http://localhost:{port}/api/{api}{path}"),
         ])
         .output()
         .context("curl failed")?;
@@ -56,7 +87,7 @@ fn api_get(port: u16, api_key: &str, path: &str) -> Result<String> {
     Ok(String::from_utf8_lossy(&out.stdout).to_string())
 }
 
-fn api_post(port: u16, api_key: &str, path: &str, body: &str) -> Result<String> {
+fn api_post(port: u16, api_key: &str, api: &str, path: &str, body: &str) -> Result<String> {
     let out = Command::new("curl")
         .args([
             "-sf",
@@ -70,7 +101,7 @@ fn api_post(port: u16, api_key: &str, path: &str, body: &str) -> Result<String> 
             "Content-Type: application/json",
             "-H",
             &format!("X-Api-Key: {api_key}"),
-            &format!("http://localhost:{port}{path}"),
+            &format!("http://localhost:{port}/api/{api}{path}"),
             "-d",
             body,
         ])
@@ -85,30 +116,20 @@ fn api_post(port: u16, api_key: &str, path: &str, body: &str) -> Result<String> 
 /// The Decypharr download-client payload. Byte-mirrors the installer's
 /// `configure_arr_service` (QBittorrent mock, torrent protocol).
 fn decypharr_client_json(arr: &Arr, api_key: &str) -> String {
-    let cat_field = if arr.id == "sonarr" {
-        "tvCategory"
-    } else {
-        "movieCategory"
-    };
-    let cat_imported = if arr.id == "sonarr" {
-        "tvImportedCategory"
-    } else {
-        "movieImportedCategory"
-    };
     format!(
         r#"{{"name":"Decypharr","implementation":"QBittorrent","configContract":"QBittorrentSettings","protocol":"torrent","enable":true,"priority":1,"removeCompletedDownloads":true,"removeFailedDownloads":true,"fields":[{{"name":"host","value":"decypharr"}},{{"name":"port","value":8282}},{{"name":"useSsl","value":false}},{{"name":"username","value":"http://{id}:{port}"}},{{"name":"password","value":"{key}"}},{{"name":"{cat}","value":"{id}"}},{{"name":"{cat_imp}","value":""}},{{"name":"initialState","value":0}},{{"name":"sequentialOrder","value":false}},{{"name":"firstAndLastFirst","value":false}}],"tags":[]}}"#,
         id = arr.id,
         port = arr.port,
         key = api_key.replace('"', "\\\""),
-        cat = cat_field,
-        cat_imp = cat_imported,
+        cat = arr.cat_field,
+        cat_imp = arr.cat_imported_field,
     )
 }
 
 /// Check whether the Decypharr download client is correctly wired in an *arr.
 /// Returns Ok(true) when host/username/password all match.
 fn decypharr_wired(arr: &Arr, api_key: &str) -> bool {
-    let clients = match api_get(arr.port, api_key, "/api/v3/downloadclient") {
+    let clients = match api_get(arr.port, api_key, arr.api, "/downloadclient") {
         Ok(c) => c,
         Err(_) => return false,
     };
@@ -140,10 +161,29 @@ pub fn ensure_decypharr_client(
     install_dir: &std::path::Path,
     tx: &std::sync::mpsc::Sender<CareEvent>,
 ) -> Result<()> {
+    let base: Vec<&Arr> = ARRS.iter().collect();
+    ensure_decypharr_client_for(install_dir, tx, &base)?;
+    // Extras only if the user opted in (config dir exists = opted in).
+    let extras: Vec<&Arr> = EXTRA_ARRS
+        .iter()
+        .filter(|a| {
+            install_dir
+                .join(format!("configs/{}/config.xml", a.id))
+                .exists()
+        })
+        .collect();
+    ensure_decypharr_client_for(install_dir, tx, &extras)
+}
+
+fn ensure_decypharr_client_for(
+    install_dir: &std::path::Path,
+    tx: &std::sync::mpsc::Sender<CareEvent>,
+    arrs: &[&Arr],
+) -> Result<()> {
     let log = |s: &str| {
         let _ = tx.send(CareEvent::Log(s.to_string()));
     };
-    for arr in ARRS {
+    for arr in arrs {
         let api_key = arr_api_key(install_dir, arr.id).map_err(|e| anyhow::anyhow!("{e}"))?;
         if decypharr_wired(arr, &api_key) {
             log(&format!(
@@ -158,7 +198,7 @@ pub fn ensure_decypharr_client(
         ));
         let body = decypharr_client_json(arr, &api_key);
         // Try update-in-place first if a Decypharr client exists with an id.
-        let clients = api_get(arr.port, &api_key, "/api/v3/downloadclient").unwrap_or_default();
+        let clients = api_get(arr.port, &api_key, arr.api, "/downloadclient").unwrap_or_default();
         let existing_id = clients
             .find("\"name\":\"Decypharr\"")
             .and_then(|i| {
@@ -188,8 +228,8 @@ pub fn ensure_decypharr_client(
                         "-H",
                         &format!("X-Api-Key: {api_key}"),
                         &format!(
-                            "http://localhost:{}/api/v3/downloadclient/{id}?forceSave=true",
-                            arr.port
+                            "http://localhost:{}/api/{}/downloadclient/{id}?forceSave=true",
+                            arr.port, arr.api
                         ),
                         "-d",
                         &body,
@@ -200,7 +240,8 @@ pub fn ensure_decypharr_client(
             None => api_post(
                 arr.port,
                 &api_key,
-                "/api/v3/downloadclient?forceSave=true",
+                arr.api,
+                "/downloadclient?forceSave=true",
                 &body,
             )
             .is_ok(),
@@ -233,7 +274,7 @@ pub fn prowlarr_resync(
         let _ = tx.send(CareEvent::Log(s.to_string()));
     };
     let api_key = arr_api_key(install_dir, "prowlarr").map_err(|e| anyhow::anyhow!("{e}"))?;
-    let indexers = api_get(9696, &api_key, "/api/v1/indexer").unwrap_or_default();
+    let indexers = api_get(9696, &api_key, "v1", "/indexer").unwrap_or_default();
     if indexers.trim() == "[]" || indexers.trim().is_empty() {
         log("[warn] Prowlarr has no indexers configured yet — add some in its UI first");
         log("       (Porthole will ask for indexer credentials in a later phase)");
@@ -243,11 +284,90 @@ pub fn prowlarr_resync(
     api_post(
         9696,
         &api_key,
-        "/api/v1/command",
+        "v1",
+        "/command",
         r#"{"name":"ApplicationIndexerSync"}"#,
     )
     .context("Prowlarr did not accept the sync command")?;
     log("[ok] sync command accepted — indexers are being pushed to the *arrs");
+    Ok(())
+}
+
+/// Add Lidarr/Sportarr as Prowlarr applications (if opted in).
+/// Mirrors the installer's Sonarr/Radarr app payloads.
+pub fn ensure_prowlarr_apps(
+    install_dir: &std::path::Path,
+    tx: &std::sync::mpsc::Sender<CareEvent>,
+) -> Result<()> {
+    let log = |s: &str| {
+        let _ = tx.send(CareEvent::Log(s.to_string()));
+    };
+    let prowlarr_key = arr_api_key(install_dir, "prowlarr").map_err(|e| anyhow::anyhow!("{e}"))?;
+    let apps = api_get(9696, &prowlarr_key, "v1", "/applications").unwrap_or_default();
+
+    // (display name, implementation, baseUrl, api key, sync categories)
+    struct Target {
+        name: &'static str,
+        impl_: &'static str,
+        base_url: &'static str,
+        key: String,
+        cats: &'static str,
+    }
+    let mut targets: Vec<Target> = Vec::new();
+    if install_dir.join("configs/lidarr/config.xml").exists() {
+        if let Ok(key) = arr_api_key(install_dir, "lidarr") {
+            // Audio categories: 3000 parent + subs. Keep it to the parent;
+            // Prowlarr expands it.
+            targets.push(Target {
+                name: "Lidarr",
+                impl_: "Lidarr",
+                base_url: "http://lidarr:8686",
+                key,
+                cats: "[3000]",
+            });
+        }
+    }
+    if install_dir.join("configs/sportarr/config.xml").exists() {
+        if let Ok(key) = arr_api_key(install_dir, "sportarr") {
+            // Sportarr is Sonarr-API-compatible: register as a Sonarr app.
+            // TV/Sports categories.
+            targets.push(Target {
+                name: "Sportarr",
+                impl_: "Sonarr",
+                base_url: "http://sportarr:1867",
+                key,
+                cats: "[5000,5040,5045,5060]",
+            });
+        }
+    }
+
+    for t in &targets {
+        if apps.contains(&format!("\"name\":\"{}\"", t.name)) {
+            log(&format!("[ok] Prowlarr already has the {} app", t.name));
+            continue;
+        }
+        let body = format!(
+            r#"{{"name":"{name}","implementation":"{impl_}","configContract":"{impl_}Settings","syncLevel":"fullSync","fields":[{{"name":"prowlarrUrl","value":"http://prowlarr:9696"}},{{"name":"baseUrl","value":"{base_url}"}},{{"name":"apiKey","value":"{key}"}},{{"name":"syncCategories","value":{cats}}}],"tags":[]}}"#,
+            name = t.name,
+            impl_ = t.impl_,
+            base_url = t.base_url,
+            key = t.key.replace('"', "\\\""),
+            cats = t.cats,
+        );
+        match api_post(
+            9696,
+            &prowlarr_key,
+            "v1",
+            "/applications?forceSave=true",
+            &body,
+        ) {
+            Ok(_) => log(&format!("[ok] {} app added to Prowlarr", t.name)),
+            Err(e) => log(&format!(
+                "[warn] could not add {} to Prowlarr: {e:#}",
+                t.name
+            )),
+        }
+    }
     Ok(())
 }
 
@@ -272,6 +392,13 @@ mod tests {
         let rjson = decypharr_client_json(radarr, "key456");
         assert!(rjson.contains(r#""name":"username","value":"http://radarr:7878""#));
         assert!(rjson.contains(r#""name":"movieCategory","value":"radarr""#));
+
+        // Lidarr uses the music category and API v1.
+        let lidarr = &EXTRA_ARRS[0];
+        let ljson = decypharr_client_json(lidarr, "key789");
+        assert!(ljson.contains(r#""name":"username","value":"http://lidarr:8686""#));
+        assert!(ljson.contains(r#""name":"musicCategory","value":"lidarr""#));
+        assert_eq!(lidarr.api, "v1");
     }
 
     #[test]

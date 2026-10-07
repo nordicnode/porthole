@@ -430,16 +430,91 @@ fn render_prefs(f: &mut Frame, app: &App, area: Rect) {
                 ),
             ]),
         ])),
+        ListItem::new(Text::from(vec![
+            Line::from(vec![
+                Span::styled(
+                    if s == 7 { "▸ " } else { "  " },
+                    Style::default().fg(ACCENT),
+                ),
+                Span::styled(
+                    format!("{:<14}", "Music"),
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("< {} >", if p.extras.lidarr { "yes" } else { "no" }),
+                    Style::default().fg(ACCENT),
+                ),
+            ]),
+            Line::from(vec![
+                Span::raw("    "),
+                Span::styled(
+                    "Lidarr: your music butler. Space / ← → to switch.",
+                    Style::default().fg(DIM),
+                ),
+            ]),
+        ])),
+        ListItem::new(Text::from(vec![
+            Line::from(vec![
+                Span::styled(
+                    if s == 8 { "▸ " } else { "  " },
+                    Style::default().fg(ACCENT),
+                ),
+                Span::styled(
+                    format!("{:<14}", "Subtitles"),
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("< {} >", if p.extras.bazarr { "yes" } else { "no" }),
+                    Style::default().fg(ACCENT),
+                ),
+            ]),
+            Line::from(vec![
+                Span::raw("    "),
+                Span::styled(
+                    "Bazarr: fetches subtitles automatically. Space / ← → to switch.",
+                    Style::default().fg(DIM),
+                ),
+            ]),
+        ])),
+        ListItem::new(Text::from(vec![
+            Line::from(vec![
+                Span::styled(
+                    if s == 9 { "▸ " } else { "  " },
+                    Style::default().fg(ACCENT),
+                ),
+                Span::styled(
+                    format!("{:<14}", "Sports"),
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("< {} >", if p.extras.sportarr { "yes" } else { "no" }),
+                    Style::default().fg(ACCENT),
+                ),
+            ]),
+            Line::from(vec![
+                Span::raw("    "),
+                Span::styled(
+                    "Sportarr: follows your teams (newer, opt-in). Space / ← → to switch.",
+                    Style::default().fg(DIM),
+                ),
+            ]),
+        ])),
         ListItem::new(Line::from(vec![
             Span::styled(
-                if s == 7 { "▸ " } else { "  " },
+                if s == 10 { "▸ " } else { "  " },
                 Style::default().fg(ACCENT),
             ),
             Span::styled(
                 "[ Review the plan → ]",
                 Style::default()
-                    .fg(if s == 7 { Color::Black } else { GOOD })
-                    .bg(if s == 7 { GOOD } else { Color::Reset })
+                    .fg(if s == 10 { Color::Black } else { GOOD })
+                    .bg(if s == 10 { GOOD } else { Color::Reset })
                     .add_modifier(Modifier::BOLD),
             ),
         ])),
@@ -773,6 +848,57 @@ fn render_care(f: &mut Frame, app: &App, area: Rect) {
                 ])));
             }
             let list = List::new(items).block(title_block("Pick a backup (Esc to go back)"));
+            f.render_widget(list, area);
+        }
+        CareView::PickExtras => {
+            let e = &c.extras_pick;
+            let rows = [
+                (
+                    "Music (Lidarr)",
+                    e.lidarr,
+                    "Your music butler — follows artists, grabs albums.",
+                ),
+                (
+                    "Subtitles (Bazarr)",
+                    e.bazarr,
+                    "Fetches subtitles for everything, automatically.",
+                ),
+                (
+                    "Sports (Sportarr)",
+                    e.sportarr,
+                    "Follows your teams. Newer — opt-in.",
+                ),
+            ];
+            let mut items: Vec<ListItem> = vec![ListItem::new(Line::from(vec![Span::styled(
+                "Which extras should join the fleet?",
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::ITALIC),
+            )]))];
+            for (i, (label, on, hint)) in rows.iter().enumerate() {
+                let selected = i == c.selected;
+                items.push(ListItem::new(Text::from(vec![
+                    Line::from(vec![
+                        Span::styled(
+                            if selected { "▸ " } else { "  " },
+                            Style::default().fg(ACCENT),
+                        ),
+                        Span::styled(
+                            format!("< {} > {label}", if *on { "yes" } else { "no" }),
+                            Style::default().fg(if selected { Color::White } else { Color::Gray }),
+                        ),
+                    ]),
+                    Line::from(vec![
+                        Span::raw("    "),
+                        Span::styled(*hint, Style::default().fg(DIM)),
+                    ]),
+                ])));
+            }
+            items.push(ListItem::new(Line::from(vec![Span::styled(
+                "Space toggles · Enter applies · Esc cancels",
+                Style::default().fg(DIM),
+            )])));
+            let list = List::new(items).block(title_block("Extra services"));
             f.render_widget(list, area);
         }
         CareView::Confirm => {

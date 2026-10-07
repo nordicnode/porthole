@@ -61,6 +61,8 @@ pub struct Preferences {
     pub tz: String,
     /// Quality profile choice: false = 1080p, true = 4K. Drives Configarr.
     pub quality_4k: bool,
+    /// Optional fleet members.
+    pub extras: crate::extras::Extras,
 }
 
 impl Default for Preferences {
@@ -74,6 +76,7 @@ impl Default for Preferences {
             pgid: "1000".to_string(),
             tz: "UTC".to_string(),
             quality_4k: false,
+            extras: crate::extras::Extras::default(),
         }
     }
 }
@@ -170,6 +173,11 @@ pub static STEPS: &[StepDef] = &[
         plain: "Apply the TRaSH Guides' expert quality profiles to Sonarr and Radarr.",
         wires_up: "Configarr→Sonarr/Radarr",
     },
+    StepDef {
+        title: "Wire the extras",
+        plain: "Connect Lidarr, Bazarr and Sportarr (if you picked them).",
+        wires_up: "Decypharr→Lidarr/Sportarr · Prowlarr→Lidarr/Sportarr",
+    },
 ];
 
 /// Events the worker thread sends back to the UI.
@@ -203,6 +211,16 @@ pub fn run_provision(prefs: Preferences, tx: Sender<ProvEvent>) {
         &quality_path,
         if prefs.quality_4k { "4k\n" } else { "1080p\n" },
     );
+
+    // Write the extras override BEFORE setup.sh runs `docker compose up`
+    // (the installer's compose wrapper auto-discovers it).
+    let install = std::path::Path::new(&prefs.install_dir);
+    if let Err(e) = crate::extras::write_override(install, &prefs.extras) {
+        log(&format!("[warn] could not write extras override: {e:#}"));
+    }
+    if let Err(e) = crate::extras::ensure_data_dirs(install, &prefs.extras) {
+        log(&format!("[warn] could not create extras data dirs: {e:#}"));
+    }
 
     // ── Step 0: toolbox ──
     send(ProvEvent::StepBegin(0));
@@ -399,6 +417,27 @@ pub fn run_provision(prefs: Preferences, tx: Sender<ProvEvent>) {
             }
         }
         send(ProvEvent::StepDone(5, quality_ok));
+    }
+
+    // ── Step 6: wire the extras ──
+    // Best-effort like Step 5.
+    if all_ok && prefs.extras.any() {
+        send(ProvEvent::StepBegin(6));
+        let install = std::path::Path::new(&prefs.install_dir);
+        let (ctx_tx, ctx_rx) = std::sync::mpsc::channel();
+        let extras_ok = match crate::care::wire_extras(install, &ctx_tx) {
+            Ok(()) => true,
+            Err(e) => {
+                log(&format!("[warn] extras wiring skipped: {e:#}"));
+                false
+            }
+        };
+        for msg in ctx_rx.try_iter() {
+            if let crate::care::CareEvent::Log(line) = msg {
+                log(&line);
+            }
+        }
+        send(ProvEvent::StepDone(6, extras_ok));
     }
 
     send(ProvEvent::Finished(all_ok));

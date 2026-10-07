@@ -805,6 +805,40 @@ pub fn apply_quality_profiles(
     Ok(())
 }
 
+/// Wire the optional extras after they start:
+/// Decypharr download clients + Prowlarr apps for Lidarr/Sportarr,
+/// guided Bazarr setup. Idempotent; skips anything not opted in.
+pub fn wire_extras(install_dir: &Path, tx: &Sender<CareEvent>) -> Result<()> {
+    let log = |s: &str| {
+        let _ = tx.send(CareEvent::Log(s.to_string()));
+    };
+
+    // Decypharr clients (base *arrs + opted-in extras).
+    crate::arr::ensure_decypharr_client(install_dir, tx)?;
+    // Prowlarr apps for the extras.
+    crate::arr::ensure_prowlarr_apps(install_dir, tx)?;
+    // Prowlarr re-sync to push indexers to the new apps.
+    crate::arr::prowlarr_resync(install_dir, tx)?;
+
+    // Bazarr: guided setup (API schema not stable enough to automate).
+    if install_dir.join("configs/bazarr").exists() {
+        log("[in] Bazarr needs its Sonarr/Radarr connection — two minutes, once:");
+        match (
+            crate::configarr::arr_api_key(install_dir, "sonarr"),
+            crate::configarr::arr_api_key(install_dir, "radarr"),
+        ) {
+            (Ok(skey), Ok(rkey)) => {
+                for line in crate::extras::bazarr_manual_steps(&skey, &rkey) {
+                    log(&format!("  • {line}"));
+                }
+            }
+            _ => log("[warn] couldn't read the Sonarr/Radarr API keys for Bazarr setup"),
+        }
+    }
+    log("[ok] extras wired.");
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -64,7 +64,7 @@ pub enum WizardPhase {
 
 /// Form rows: 0 API key, 1 install dir, 2 media server, 3 PUID, 4 PGID,
 /// 5 timezone, 6 the "review plan" action row.
-pub const FORM_ROWS: usize = 8;
+pub const FORM_ROWS: usize = 11;
 
 pub struct WizardState {
     pub phase: WizardPhase,
@@ -210,6 +210,18 @@ impl WizardState {
                         if c == ' ' {
                             self.prefs.quality_4k = !self.prefs.quality_4k;
                         }
+                    } else if self.form_selected == 7 {
+                        if c == ' ' {
+                            self.prefs.extras.lidarr = !self.prefs.extras.lidarr;
+                        }
+                    } else if self.form_selected == 8 {
+                        if c == ' ' {
+                            self.prefs.extras.bazarr = !self.prefs.extras.bazarr;
+                        }
+                    } else if self.form_selected == 9 {
+                        if c == ' ' {
+                            self.prefs.extras.sportarr = !self.prefs.extras.sportarr;
+                        }
                     } else if let Some(f) = self.field_mut(self.form_selected) {
                         f.push(c);
                     }
@@ -219,6 +231,12 @@ impl WizardState {
                         self.prefs.media_server = self.prefs.media_server.toggle();
                     } else if self.form_selected == 6 {
                         self.prefs.quality_4k = !self.prefs.quality_4k;
+                    } else if self.form_selected == 7 {
+                        self.prefs.extras.lidarr = !self.prefs.extras.lidarr;
+                    } else if self.form_selected == 8 {
+                        self.prefs.extras.bazarr = !self.prefs.extras.bazarr;
+                    } else if self.form_selected == 9 {
+                        self.prefs.extras.sportarr = !self.prefs.extras.sportarr;
                     }
                 }
                 KeyCode::Enter => {
@@ -457,12 +475,23 @@ impl DoctorState {
                 }
             }
             if problems.is_empty() {
-                // Both installed — verify the wiring via a lightweight probe.
+                // Verify the wiring via a lightweight probe.
                 // Full verification lives in Care; here we just detect drift.
-                let wired = ["sonarr", "radarr"].iter().all(|id| {
+                let mut ids = vec!["sonarr", "radarr"];
+                for extra in ["lidarr", "sportarr"] {
+                    if install.join(format!("configs/{extra}/config.xml")).exists() {
+                        ids.push(extra);
+                    }
+                }
+                let wired = ids.iter().all(|id| {
                     crate::configarr::arr_api_key(install, id)
                         .map(|key| {
-                            let port = if *id == "sonarr" { 8989 } else { 7878 };
+                            let port = match *id {
+                                "sonarr" => 8989,
+                                "radarr" => 7878,
+                                "lidarr" => 8686,
+                                _ => 1867, // sportarr
+                            };
                             let out = std::process::Command::new("curl")
                                 .args([
                                     "-sf",
@@ -661,6 +690,7 @@ pub enum CareOp {
     MediaServerTune,
     SpeedTest,
     QualityProfiles,
+    Extras(crate::extras::Extras),
     CheckUpdates,
     CheckPortholeUpdate,
     InstallPortholeUpdate(crate::selfupdate::ReleaseInfo),
@@ -679,6 +709,7 @@ impl CareOp {
             CareOp::MediaServerTune => "Tune media server for cloud",
             CareOp::SpeedTest => "Test my connection speed",
             CareOp::QualityProfiles => "Apply expert quality profiles",
+            CareOp::Extras(_) => "Add or remove extra services",
             CareOp::CheckUpdates => "Check for updates",
             CareOp::CheckPortholeUpdate => "Check for Porthole updates",
             CareOp::InstallPortholeUpdate(_) => "Install Porthole update",
@@ -708,6 +739,9 @@ impl CareOp {
             }
             CareOp::QualityProfiles => {
                 "Sync the TRaSH Guides' quality profiles into Sonarr and Radarr. Reverts hand-edits by design."
+            }
+            CareOp::Extras(_) => {
+                "Tick music (Lidarr), subtitles (Bazarr), sports (Sportarr) — Porthole starts, stops and wires them."
             }
             CareOp::CheckUpdates => {
                 "See if any service has a new version. Downloads, but changes nothing."
@@ -788,6 +822,7 @@ impl CareOp {
                 "  • verify the new profiles landed in Sonarr and Radarr".to_string(),
                 "Hand-edited profiles get reset to the guide — that's the point.".to_string(),
             ],
+            CareOp::Extras(_) => vec!["Apply your extra-services selection.".to_string()],
             CareOp::CheckUpdates => vec![
                 "Porthole will download the latest images and tell you what's new.".to_string(),
                 "Nothing restarts. Nothing changes.".to_string(),
@@ -836,6 +871,7 @@ pub(crate) const CARE_ACTIONS: &[fn() -> CareOp] = &[
     || CareOp::MediaServerTune,
     || CareOp::SpeedTest,
     || CareOp::QualityProfiles,
+    || CareOp::Extras(crate::extras::Extras::default()),
     || CareOp::CheckUpdates,
     || CareOp::CheckPortholeUpdate,
     || CareOp::UpdateFleet,
@@ -846,6 +882,7 @@ pub(crate) const CARE_ACTIONS: &[fn() -> CareOp] = &[
 pub enum CareView {
     Main,
     PickBackup,
+    PickExtras,
     Confirm,
     Working,
     Done,
@@ -856,6 +893,7 @@ pub struct CareState {
     pub selected: usize,
     pub backups: Vec<PathBuf>,
     pub pending_op: Option<CareOp>,
+    pub extras_pick: crate::extras::Extras,
     /// For destructive ops: first Enter arms, second Enter fires.
     pub confirm_armed: bool,
     pub logs: Vec<String>,
@@ -872,6 +910,7 @@ impl CareState {
             selected: 0,
             backups: Vec::new(),
             pending_op: None,
+            extras_pick: crate::extras::Extras::default(),
             confirm_armed: false,
             logs: Vec::new(),
             done_message: String::new(),
@@ -950,6 +989,21 @@ impl CareState {
                             self.selected = 0;
                             self.view = CareView::PickBackup;
                         }
+                        CareOp::Extras(_) => {
+                            // Load current selection from the override file.
+                            self.extras_pick = crate::extras::Extras::default();
+                            if let Some(dir) = install_dir {
+                                let p =
+                                    std::path::Path::new(dir).join("docker-compose.override.yml");
+                                if let Ok(yml) = std::fs::read_to_string(&p) {
+                                    self.extras_pick.lidarr = yml.contains("lidarr:");
+                                    self.extras_pick.bazarr = yml.contains("bazarr:");
+                                    self.extras_pick.sportarr = yml.contains("sportarr:");
+                                }
+                            }
+                            self.selected = 0;
+                            self.view = CareView::PickExtras;
+                        }
                         _ => {
                             self.pending_op = Some(op);
                             self.view = CareView::Confirm;
@@ -972,6 +1026,26 @@ impl CareState {
                 }
                 KeyCode::Esc => {
                     self.selected = 1;
+                    self.view = CareView::Main;
+                }
+                _ => {}
+            },
+            CareView::PickExtras => match code {
+                KeyCode::Up => self.selected = self.selected.saturating_sub(1),
+                KeyCode::Down => self.selected = (self.selected + 1).min(2),
+                KeyCode::Char(' ') => match self.selected {
+                    0 => self.extras_pick.lidarr = !self.extras_pick.lidarr,
+                    1 => self.extras_pick.bazarr = !self.extras_pick.bazarr,
+                    2 => self.extras_pick.sportarr = !self.extras_pick.sportarr,
+                    _ => {}
+                },
+                KeyCode::Enter => {
+                    // Apply: pending_op carries the new selection.
+                    self.pending_op = Some(CareOp::Extras(self.extras_pick));
+                    self.confirm_armed = false;
+                    self.view = CareView::Confirm;
+                }
+                KeyCode::Esc => {
                     self.view = CareView::Main;
                 }
                 _ => {}
@@ -1115,6 +1189,30 @@ fn run_care_op(
                     .unwrap_or(false);
             crate::care::apply_quality_profiles(std::path::Path::new(&d), four_k, &tx)?;
             Ok("Expert quality profiles applied.".to_string())
+        }
+        CareOp::Extras(selection) => {
+            let d = dir()?;
+            let install = std::path::Path::new(&d);
+            crate::extras::write_override(install, &selection)?;
+            crate::extras::ensure_data_dirs(install, &selection)?;
+            // (Re)start the fleet so compose picks up the override change.
+            // Stopped extras are removed; new ones are pulled and started.
+            let _ = tx.send(crate::care::CareEvent::Log(
+                "[in] applying the new selection…".to_string(),
+            ));
+            let up = std::process::Command::new("docker")
+                .args(["compose", "up", "-d", "--remove-orphans"])
+                .current_dir(install)
+                .output();
+            match up {
+                Ok(o) if o.status.success() => {
+                    crate::care::wire_extras(install, &tx)?;
+                    Ok("Extra services updated.".to_string())
+                }
+                _ => Err(anyhow::anyhow!(
+                    "could not restart the fleet — try `docker compose up -d` in the install dir"
+                )),
+            }
         }
         CareOp::UpdateFleet => {
             let d = dir()?;

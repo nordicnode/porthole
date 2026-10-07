@@ -91,6 +91,27 @@ pub static SERVICES: &[Service] = &[
         port: 8096,
         group: "Watch",
     },
+    Service {
+        id: "lidarr",
+        name: "Lidarr",
+        plain: "Your music butler. Follows your artists and grabs new albums on its own.",
+        port: 8686,
+        group: "Extras",
+    },
+    Service {
+        id: "bazarr",
+        name: "Bazarr",
+        plain: "The subtitle fairy. Fetches subtitles for everything automatically.",
+        port: 6767,
+        group: "Extras",
+    },
+    Service {
+        id: "sportarr",
+        name: "Sportarr",
+        plain: "Your sports butler. Follows your teams and grabs the games. (Newer — opt-in.)",
+        port: 1867,
+        group: "Extras",
+    },
 ];
 
 /// The wiring map. This is Porthole's real product: every introduction below
@@ -171,5 +192,35 @@ pub static INTEGRATIONS: &[Integration] = &[
         from: "Configarr",
         to: "Radarr",
         plain: "Same expert tuning for movies: quality, formats and naming, kept in sync.",
+    },
+    Integration {
+        from: "Decypharr",
+        to: "Lidarr",
+        plain: "Finished albums are handed to Lidarr by itself — music included.",
+    },
+    Integration {
+        from: "Decypharr",
+        to: "Sportarr",
+        plain: "Finished games are handed to Sportarr by itself.",
+    },
+    Integration {
+        from: "Prowlarr",
+        to: "Lidarr",
+        plain: "Music search sources shared with Lidarr automatically.",
+    },
+    Integration {
+        from: "Prowlarr",
+        to: "Sportarr",
+        plain: "Sports search sources shared with Sportarr automatically.",
+    },
+    Integration {
+        from: "Sonarr",
+        to: "Bazarr",
+        plain: "Bazarr watches Sonarr's library and fetches subtitles for every episode.",
+    },
+    Integration {
+        from: "Radarr",
+        to: "Bazarr",
+        plain: "Same for movies — subtitles appear next to the film, no hunting.",
     },
 ];

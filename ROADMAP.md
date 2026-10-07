@@ -269,28 +269,35 @@ research plan, both verified before building:
 The three highest-value, lowest-risk additions. All actively maintained;
 all slot into the existing wiring with no new infrastructure.
 
-- [ ] **Lidarr** (music — Sonarr/Radarr's sibling, active Sep 2026).
-      Wiring: Prowlarr syncs music indexers automatically; Decypharr
-      category `lidarr`; lands in `/music` for Plex/Jellyfin; same API-key
-      auth pattern as the other *arrs, so Doctor/Care/regen extend
-      mechanically. Open question: no Seerr-equivalent request manager
-      for music was found — requests may stay inside Lidarr's own UI
-      until something emerges.
-- [ ] **Bazarr** (subtitles, v1.6.2 Sep 2026). Wiring: needs only the
-      Sonarr/Radarr/Lidarr API keys Porthole already holds, plus media
-      paths — no download client at all. Auto-fetches and upgrades
-      subtitles beside the media; Plex webhook refreshes the library.
-      Near-zero infrastructure cost, high everyday value.
-- [ ] **Sportarr** (sports PVR — the standout new *arr, repo Oct 2025,
-      Sonarr-API-compatible, Prowlarr sync works, Decypharr supported).
-      Wiring: same shape as Sonarr, so it rides the existing patterns;
-      younger and less battle-tested than the family, so ship it as an
-      opt-in fleet member, not a default.
-- [ ] For each: service definition + plain-language description, wiring-map
-      entries, Prowlarr sync, Doctor health checks, Care backup coverage,
-      native config generation where deterministic, and a wizard question
-      ("Which of these do you want?" — music / subtitles / sports,
-      all default-on except Sportarr).
+**Shipped 2026-10-07** (9/10 — Bazarr's Sonarr/Radarr link is guided,
+not automated; see below). Architecture: Porthole generates
+`docker-compose.override.yml` (auto-discovered by the installer's
+compose wrapper) instead of patching the installer's compose file.
+All three default **off** in the wizard (Sportarr is explicitly newer);
+a Care action adds/removes them post-install.
+
+- [x] **Lidarr** (music). `lscr.io/linuxserver/lidarr`, port 8686.
+      Decypharr download client (category `lidarr`, **API v1** — not
+      v3); Prowlarr app with audio category 3000; music root
+      `/data/media/music`. API key read from its self-generated
+      `config.xml` after first start.
+- [x] **Bazarr** (subtitles). `lscr.io/linuxserver/bazarr`, port 6767,
+      768 MB memory cap (upstream balloons without one). Porthole
+      starts it and shows the exact Sonarr/Radarr connection values
+      (host, port, API key) for a 2-minute guided setup — Bazarr's
+      settings API schema isn't stable enough to automate safely, and
+      its settings POST hangs when the *arrs are unreachable. Same
+      honest boundary as Jellyfin in Phase 5.
+- [x] **Sportarr** (sports). `sportarr/sportarr:latest`, port 1867,
+      opt-in. Sonarr-API-compatible: Decypharr client + Prowlarr app
+      (registered as a Sonarr app per its README) reuse the existing
+      code paths.
+- [x] For each: service definition + plain-language description,
+      wiring-map entries, Prowlarr sync (Lidarr/Sportarr),
+      Doctor health checks (per-service loop + download-client check
+      extended), Care backup coverage (automatic — backup tars the
+      install dir minus `data/`), and the wizard question
+      ("Music / Subtitles / Sports" toggles).
 
 **Traps & edge cases (researched Oct 2026):**
 
