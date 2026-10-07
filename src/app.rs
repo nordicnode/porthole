@@ -472,6 +472,55 @@ impl DoctorState {
             }
         }
 
+        // Own cloud storage (rclone): is the mount answering? Is the mover on?
+        if let Some(dir) = &config.install_dir {
+            let install = std::path::Path::new(dir);
+            let rclone_conf = install.join("configs/rclone/rclone.conf");
+            if rclone_conf.exists() {
+                // Mount check: does the mountpoint respond?
+                let mnt = install.join("mnt/cloud");
+                let mnt_ok = std::process::Command::new("timeout")
+                    .args(["5", "ls", &mnt.to_string_lossy()])
+                    .output()
+                    .map(|o| o.status.success())
+                    .unwrap_or(false);
+                if mnt_ok {
+                    checks.push(Check {
+                        name: "Cloud storage".to_string(),
+                        message: "Your encrypted cloud mount is answering.".to_string(),
+                        status: CheckStatus::Pass,
+                        fix: None,
+                        fix_label: String::new(),
+                    });
+                } else {
+                    checks.push(Check {
+                        name: "Cloud storage".to_string(),
+                        message: "The cloud mount isn't answering — your library may look empty. (Try: sudo systemctl restart porthole-rclone.)".to_string(),
+                        status: CheckStatus::Fail,
+                        fix: None,
+                        fix_label: String::new(),
+                    });
+                }
+                // Mover timer check.
+                let timer_on = std::process::Command::new("systemctl")
+                    .args(["is-active", "porthole-mover.timer"])
+                    .output()
+                    .map(|o| {
+                        o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "active"
+                    })
+                    .unwrap_or(false);
+                if !timer_on {
+                    checks.push(Check {
+                        name: "Auto-upload".to_string(),
+                        message: "The upload timer isn't running — finished downloads stay local. (Care → Set up automatic uploads, then enable the timer.)".to_string(),
+                        status: CheckStatus::Warn,
+                        fix: None,
+                        fix_label: String::new(),
+                    });
+                }
+            }
+        }
+
         // Download client: Decypharr must be wired into Sonarr/Radarr
         // with the *arr's own URL + API key (callback routing, not auth).
         if let Some(dir) = &config.install_dir {
@@ -715,6 +764,9 @@ pub enum CareOp {
     Extras(crate::extras::Extras),
     VpnSetup(String, String), // (provider, wireguard_key)
     LocalClients,
+    CloudStorage(crate::storage_cloud::CloudBackend),
+    UploadMover,
+    HardlinkTest,
     CheckUpdates,
     CheckPortholeUpdate,
     InstallPortholeUpdate(crate::selfupdate::ReleaseInfo),
@@ -736,6 +788,9 @@ impl CareOp {
             CareOp::Extras(_) => "Add or remove extra services",
             CareOp::VpnSetup(_, _) => "Set up VPN for downloads",
             CareOp::LocalClients => "Wire up download clients",
+            CareOp::CloudStorage(_) => "Set up cloud storage (rclone)",
+            CareOp::UploadMover => "Set up automatic uploads",
+            CareOp::HardlinkTest => "Test hardlinks",
             CareOp::CheckUpdates => "Check for updates",
             CareOp::CheckPortholeUpdate => "Check for Porthole updates",
             CareOp::InstallPortholeUpdate(_) => "Install Porthole update",
@@ -774,6 +829,15 @@ impl CareOp {
             }
             CareOp::LocalClients => {
                 "Set permanent passwords on qBittorrent/SABnzbd and wire them into Sonarr/Radarr as download clients."
+            }
+            CareOp::CloudStorage(_) => {
+                "Generate an encrypted rclone config for your cloud. You'll authorize it once with rclone config."
+            }
+            CareOp::UploadMover => {
+                "Install a timer that moves finished downloads to your cloud every 30 minutes, safely."
+            }
+            CareOp::HardlinkTest => {
+                "Verify the *arrs can hardlink inside their containers — catches the silent full-copy disaster."
             }
             CareOp::CheckUpdates => {
                 "See if any service has a new version. Downloads, but changes nothing."
@@ -895,6 +959,24 @@ impl CareOp {
                 "  • set SABnzbd's API key and port".to_string(),
                 "  • wire both into Sonarr/Radarr as download clients".to_string(),
             ],
+            CareOp::CloudStorage(backend) => vec![
+                "Porthole will:".to_string(),
+                format!("  • generate an rclone config for {}", backend.label()),
+                "  • wrap it in encryption (crypt) — the cloud sees ciphertext only".to_string(),
+                "  • generate a mount service with media-tuned settings".to_string(),
+                "You authorize it once with `rclone config`. Back up the config!".to_string(),
+            ],
+            CareOp::UploadMover => vec![
+                "Porthole will:".to_string(),
+                "  • install a timer: every 30 min, move finished downloads to cloud".to_string(),
+                "  • skip files newer than 15 min, cap bandwidth daytime".to_string(),
+                "  • pause (not error) on Google's 750 GB/day limit".to_string(),
+            ],
+            CareOp::HardlinkTest => vec![
+                "Porthole will:".to_string(),
+                "  • test hardlinking inside a running *arr container".to_string(),
+                "Read-only. Takes 2 seconds.".to_string(),
+            ],
             CareOp::Uninstall => {
                 let mut lines = vec!["Porthole will remove:".to_string()];
                 lines.extend(crate::care::uninstall_plan(std::path::Path::new(&dir)));
@@ -918,6 +1000,9 @@ pub(crate) const CARE_ACTIONS: &[fn() -> CareOp] = &[
     || CareOp::Extras(crate::extras::Extras::default()),
     || CareOp::VpnSetup(String::new(), String::new()),
     || CareOp::LocalClients,
+    || CareOp::CloudStorage(crate::storage_cloud::CloudBackend::default()),
+    || CareOp::UploadMover,
+    || CareOp::HardlinkTest,
     || CareOp::CheckUpdates,
     || CareOp::CheckPortholeUpdate,
     || CareOp::UpdateFleet,
@@ -930,6 +1015,7 @@ pub enum CareView {
     PickBackup,
     PickExtras,
     VpnForm,
+    PickBackend,
     Confirm,
     Working,
     Done,
@@ -947,6 +1033,7 @@ pub struct CareState {
     pub vpn_provider_idx: usize,
     pub vpn_key: String,
     pub vpn_field: usize, // 0 = provider, 1 = key
+    pub backend_idx: usize,
     /// For destructive ops: first Enter arms, second Enter fires.
     pub confirm_armed: bool,
     pub logs: Vec<String>,
@@ -967,6 +1054,7 @@ impl CareState {
             vpn_provider_idx: 0,
             vpn_key: String::new(),
             vpn_field: 0,
+            backend_idx: 0,
             confirm_armed: false,
             logs: Vec::new(),
             done_message: String::new(),
@@ -1044,6 +1132,11 @@ impl CareState {
                             self.refresh_backups();
                             self.selected = 0;
                             self.view = CareView::PickBackup;
+                        }
+                        CareOp::CloudStorage(_) => {
+                            self.backend_idx = 0;
+                            self.selected = 0;
+                            self.view = CareView::PickBackend;
                         }
                         CareOp::VpnSetup(_, _) => {
                             self.vpn_provider_idx = 0;
@@ -1137,6 +1230,24 @@ impl CareState {
                         self.confirm_armed = false;
                         self.view = CareView::Confirm;
                     }
+                }
+                KeyCode::Esc => {
+                    self.view = CareView::Main;
+                }
+                _ => {}
+            },
+            CareView::PickBackend => match code {
+                KeyCode::Up => self.backend_idx = self.backend_idx.saturating_sub(1),
+                KeyCode::Down => self.backend_idx = (self.backend_idx + 1).min(2),
+                KeyCode::Enter => {
+                    let backend = match self.backend_idx {
+                        0 => crate::storage_cloud::CloudBackend::GoogleDrive,
+                        1 => crate::storage_cloud::CloudBackend::PCloud,
+                        _ => crate::storage_cloud::CloudBackend::Dropbox,
+                    };
+                    self.pending_op = Some(CareOp::CloudStorage(backend));
+                    self.confirm_armed = false;
+                    self.view = CareView::Confirm;
                 }
                 KeyCode::Esc => {
                     self.view = CareView::Main;
@@ -1305,6 +1416,26 @@ fn run_care_op(
                 _ => Err(anyhow::anyhow!(
                     "could not restart the fleet — try `docker compose up -d` in the install dir"
                 )),
+            }
+        }
+        CareOp::CloudStorage(backend) => {
+            let d = dir()?;
+            let install = std::path::Path::new(&d);
+            let pw = crate::care::setup_cloud_storage(install, backend, &tx)?;
+            Ok(format!(
+                "Cloud storage configured. CRYPT PASSWORD (back this up!): {pw}"
+            ))
+        }
+        CareOp::UploadMover => {
+            let d = dir()?;
+            crate::care::setup_upload_mover(std::path::Path::new(&d), &tx)?;
+            Ok("Upload mover ready — enable the timer to activate.".to_string())
+        }
+        CareOp::HardlinkTest => {
+            let d = dir()?;
+            match crate::storage_cloud::hardlink_smoke_test(std::path::Path::new(&d)) {
+                Ok(()) => Ok("Hardlinks work — imports will be instant.".to_string()),
+                Err(e) => Err(anyhow::anyhow!(e)),
             }
         }
         CareOp::UpdateFleet => {

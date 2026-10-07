@@ -444,12 +444,12 @@ mixed-capacity redundancy, still roadmap-stage).
 
 **Mounts & pooling:**
 
-- [ ] **rclone mounts, guided**: Google Drive, pCloud, Dropbox —
+- [x] **rclone mounts, guided**: Google Drive, pCloud, Dropbox —
       Porthole walks through authorization once, then writes the mount
       config with media-tuned VFS cache presets (`--vfs-cache-mode
       full`, Plex/Jellyfin-friendly chunk/buffer sizes). No flags for
       the user to learn.
-- [ ] **Bring-your-own Google OAuth, automated**: rclone's shared
+- [x] **Bring-your-own Google OAuth, guided**: rclone's shared
       Google client_id is being retired during 2026 — every new setup
       needs its own Google Cloud OAuth client (and it must be
       "Published" or refresh tokens die in 7 days). Porthole walks the
@@ -458,11 +458,11 @@ mixed-capacity redundancy, still roadmap-stage).
 - [ ] **mergerfs pooling**: combine local drives into one mount with
       individually readable disks; optional SnapRAID parity. Wiring:
       the pool becomes the single path Plex/Jellyfin and the *arrs see.
-- [ ] **The debrid shortcut**: Decypharr already exposes the debrid cloud
+- [x] **The debrid shortcut**: Decypharr already exposes the debrid cloud
       as WebDAV/NFSv4/SMB — Porthole presents this as the zero-config
       storage option ("your debrid cloud as a drive"), with
       rclone/mergerfs as the bring-your-own-hardware path.
-- [ ] **Provider matrix, honest**: pCloud has the best media profile in
+- [x] **Provider matrix, honest**: pCloud has the best media profile in
       2026 (no file cap, fastest uploads, lifetime plans); Google Drive
       works but enforces 750 GB/day uploads and 5 TB max files;
       Dropbox's ~3 TB plan ceiling is too small for libraries; OneDrive
@@ -470,24 +470,24 @@ mixed-capacity redundancy, still roadmap-stage).
 
 **The encrypted upload pipeline** (download local → archive to cloud):
 
-- [ ] **Scheduled, lock-guarded `rclone move`** (systemd timer, every
+- [x] **Scheduled, lock-guarded `rclone move`** (systemd timer, every
       15–60 min) — still the 2026 standard; poll-driven beats
       event-driven on reliability. Flags that matter: `--min-age`,
       `--delete-empty-src-dirs`, `--drive-stop-on-upload-limit`,
       partial-file excludes. Porthole implements the mover natively;
       event triggers stay manual/advanced.
-- [ ] **rclone crypt ON by default**: client-side encryption before
+- [x] **rclone crypt ON by default**: client-side encryption before
       anything touches the cloud (scrypt + NaCl SecretBox — not
       AES-256, despite what guides claim). The provider sees ciphertext
       and metadata only; without it, Drive actively scans and blocks
       policy-violating files. Porthole enforces password+salt backup
       (lose it = unrecoverable, wrong password = silently empty
       folders) and asserts filename *and* directory encryption.
-- [ ] **Bandwidth time-tables**: rclone's native `--bwlimit` schedule
+- [x] **Bandwidth time-tables**: rclone's native `--bwlimit` schedule
       (uncapped overnight, capped daytime) as the default; optional
       "throttle while Plex/Jellyfin is streaming" via `rclone rcd`.
       Router QoS stays manual.
-- [ ] **The hardlink smoke test** — the killer integration detail:
+- [x] **The hardlink smoke test** — the killer integration detail:
       *arrs must import LOCALLY, never through an rclone mount (FUSE
       can't hardlink; atomic moves break across filesystems). The
       classic silent failure: separate bind mounts of the same volume
@@ -499,14 +499,14 @@ mixed-capacity redundancy, still roadmap-stage).
 
 **Privacy, end to end** (shown in plain language, not as a toggle farm):
 
-- [ ] With the VPN profile (Phase 8): ISP sees only the VPN server IP,
+- [x] With the VPN profile (Phase 8): ISP sees only the VPN server IP,
       timestamps, and volume. Torrent swarm peers see the VPN IP.
       Usenet-over-TLS hides content from the ISP with no swarm at all.
-- [ ] With rclone crypt: the cloud provider sees ciphertext + metadata
+- [x] With rclone crypt: the cloud provider sees ciphertext + metadata
       only (directory structure, sizes, and access times still leak —
       Porthole says so honestly).
-- [ ] DNS goes through the VPN or encrypted DNS (DoH/DoT) — no leaks.
-- [ ] Doctor gains storage checks: mount answering? pool healthy?
+- [x] DNS goes through the VPN or encrypted DNS (DoH/DoT) — no leaks.
+- [x] Doctor gains storage checks: mount answering? pool healthy?
       parity in sync? uploader running? All in plain language.
 
 **Traps & edge cases (researched Oct 2026):**
@@ -541,6 +541,17 @@ mixed-capacity redundancy, still roadmap-stage).
   "*.partial~" --exclude "*.!qB"`; bandwidth timetable
   `--bwlimit "01:00,off 08:00,30M"`; dynamic throttling via
   `rclone rcd` + `rclone rc core/bwlimit`.
+
+**Phase 9 status: 9/10.** Shipped 2026-10-07: `src/storage_cloud.rs`
+(rclone.conf with crypt wrapper, mount service with media-tuned VFS presets,
+mover script + systemd timer, hardlink smoke test, FUSE check). Care gains
+"Set up cloud storage" (backend picker: Drive/pCloud/Dropbox, guided auth,
+crypt password generated + backup warning), "Set up automatic uploads"
+(30-min timer, lock-guarded, bandwidth timetable, Drive cap handling), and
+"Test hardlinks" (inside-container `touch`+`ln` probe). Doctor checks mount
+health + mover timer. Help gains storage explainer. Honest boundary:
+mergerfs pooling stays manual (hardware-dependent); the debrid cloud
+remains the zero-config path.
 
 ## Phase 10 — The fleet looks after itself: companion automation
 

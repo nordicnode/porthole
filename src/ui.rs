@@ -1042,6 +1042,44 @@ fn render_care(f: &mut Frame, app: &App, area: Rect) {
             let list = List::new(items).block(title_block("VPN for downloads"));
             f.render_widget(list, area);
         }
+        CareView::PickBackend => {
+            let backends = [
+                crate::storage_cloud::CloudBackend::GoogleDrive,
+                crate::storage_cloud::CloudBackend::PCloud,
+                crate::storage_cloud::CloudBackend::Dropbox,
+            ];
+            let mut items: Vec<ListItem> = vec![ListItem::new(Line::from(vec![Span::styled(
+                "Which cloud should hold your library? (encrypted before upload)",
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::ITALIC),
+            )]))];
+            for (i, b) in backends.iter().enumerate() {
+                let selected = i == c.backend_idx;
+                items.push(ListItem::new(Text::from(vec![
+                    Line::from(vec![
+                        Span::styled(
+                            if selected { "▸ " } else { "  " },
+                            Style::default().fg(ACCENT),
+                        ),
+                        Span::styled(
+                            b.label(),
+                            Style::default().fg(if selected { Color::White } else { Color::Gray }),
+                        ),
+                    ]),
+                    Line::from(vec![
+                        Span::raw("    "),
+                        Span::styled(b.blurb(), Style::default().fg(DIM)),
+                    ]),
+                ])));
+            }
+            items.push(ListItem::new(Line::from(vec![Span::styled(
+                "↑↓ choose · Enter continues · Esc cancels",
+                Style::default().fg(DIM),
+            )])));
+            let list = List::new(items).block(title_block("Cloud storage"));
+            f.render_widget(list, area);
+        }
         CareView::Confirm => {
             let mut lines: Vec<Line> = vec![Line::from(vec![Span::styled(
                 "Please read this before you say yes:",
@@ -1210,6 +1248,29 @@ fn render_help(f: &mut Frame, area: Rect) {
         )]),
         Line::from(""),
     ]);
+    text.lines.push(Line::from(""));
+    text.lines.push(Line::from(vec![Span::styled(
+        "Storage — where your library lives",
+        Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+    )]));
+    text.lines.push(Line::from(""));
+    for line in crate::storage_cloud::storage_explainer() {
+        if line.is_empty() {
+            text.lines.push(Line::from(""));
+        } else if line.ends_with(":") {
+            text.lines.push(Line::from(vec![Span::styled(
+                line,
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            )]));
+        } else {
+            text.lines.push(Line::from(Span::styled(
+                line,
+                Style::default().fg(Color::White),
+            )));
+        }
+    }
     for line in crate::download::privacy_explainer() {
         if line.is_empty() {
             text.lines.push(Line::from(""));

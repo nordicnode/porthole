@@ -18,6 +18,7 @@ mod provision;
 mod selfupdate;
 mod services;
 mod storage;
+mod storage_cloud;
 mod ui;
 
 use std::io;

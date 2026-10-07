@@ -219,6 +219,16 @@ pub static INTEGRATIONS: &[Integration] = &[
         plain: "Catches new releases on private trackers the second they appear and pushes them to download.",
     },
     Integration {
+        from: "rclone",
+        to: "Plex",
+        plain: "Your encrypted cloud appears as a local drive — Plex reads it like any folder, with a warm cache for smooth seeking.",
+    },
+    Integration {
+        from: "rclone",
+        to: "Sonarr",
+        plain: "Finished downloads move to the cloud automatically every 30 minutes — Sonarr's library just keeps growing.",
+    },
+    Integration {
         from: "Decypharr",
         to: "Lidarr",
         plain: "Finished albums are handed to Lidarr by itself — music included.",

@@ -988,6 +988,93 @@ pub fn sab_api_key(install_dir: &Path) -> Result<String> {
     Ok(key)
 }
 
+/// Set up cloud storage: generate the rclone config (with crypt),
+/// the mount service, and check FUSE prerequisites.
+/// Returns the generated crypt password (user must back it up).
+pub fn setup_cloud_storage(
+    install_dir: &Path,
+    backend: crate::storage_cloud::CloudBackend,
+    tx: &Sender<CareEvent>,
+) -> Result<String> {
+    let log = |s: &str| {
+        let _ = tx.send(CareEvent::Log(s.to_string()));
+    };
+    // Check FUSE first — classic trap.
+    if let Err(e) = crate::storage_cloud::check_fuse_allow_other() {
+        log(&format!("[warn] {e}"));
+        log("[warn] continuing anyway — fix it before mounting");
+    }
+    // Generate a crypt password (CSPRNG).
+    let mut bytes = [0u8; 24];
+    getrandom::fill(&mut bytes).map_err(|e| anyhow::anyhow!("no entropy: {e}"))?;
+    let password: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+
+    let rclone_dir = install_dir.join("configs/rclone");
+    std::fs::create_dir_all(&rclone_dir)?;
+    let conf = crate::storage_cloud::render_rclone_conf(&backend, &password);
+    let conf_path = rclone_dir.join("rclone.conf");
+    std::fs::write(&conf_path, conf)?;
+    // Secrets: mode 0600.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&conf_path, std::fs::Permissions::from_mode(0o600));
+    }
+    log(&format!(
+        "[ok] rclone config written for {} (mode 0600)",
+        backend.label()
+    ));
+
+    // Mount service (user enables it after `rclone config`).
+    let svc = crate::storage_cloud::render_mount_service(install_dir, 20);
+    let svc_path = rclone_dir.join("porthole-rclone.service");
+    std::fs::write(&svc_path, svc)?;
+    log("[ok] mount service generated");
+
+    log("[in] next steps:");
+    log("  1. Run: rclone config --config <install>/configs/rclone/rclone.conf");
+    log("     and authorize your cloud under [cloud].");
+    log("  2. Back up rclone.conf (encrypted) in TWO places.");
+    log("     Losing the crypt password = library unrecoverable.");
+    log("  3. Then: sudo cp <install>/configs/rclone/porthole-rclone.service /etc/systemd/system/");
+    log("     sudo systemctl enable --now porthole-rclone");
+    Ok(password)
+}
+
+/// Install the upload mover (script + systemd timer).
+pub fn setup_upload_mover(install_dir: &Path, tx: &Sender<CareEvent>) -> Result<()> {
+    let log = |s: &str| {
+        let _ = tx.send(CareEvent::Log(s.to_string()));
+    };
+    let rclone_dir = install_dir.join("configs/rclone");
+    std::fs::create_dir_all(&rclone_dir)?;
+
+    let script = crate::storage_cloud::render_mover_script(install_dir);
+    let script_path = rclone_dir.join("mover.sh");
+    std::fs::write(&script_path, script)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755));
+    }
+
+    let timer = crate::storage_cloud::render_mover_timer();
+    let timer_path = rclone_dir.join("porthole-mover.timer");
+    std::fs::write(&timer_path, timer)?;
+    // The service the timer triggers (simple oneshot).
+    let svc = format!(
+        "[Unit]\nDescription=Porthole cloud upload mover\n\n[Service]\nType=oneshot\nExecStart={}\n",
+        script_path.display()
+    );
+    std::fs::write(rclone_dir.join("porthole-mover.service"), svc)?;
+
+    log("[ok] mover script + timer generated");
+    log("[in] to activate:");
+    log("  sudo cp <install>/configs/rclone/porthole-mover.* /etc/systemd/system/");
+    log("  sudo systemctl enable --now porthole-mover.timer");
+    Ok(())
+}
+
 pub fn wire_extras(install_dir: &Path, tx: &Sender<CareEvent>) -> Result<()> {
     let log = |s: &str| {
         let _ = tx.send(CareEvent::Log(s.to_string()));
