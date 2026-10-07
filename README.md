@@ -10,6 +10,7 @@ Seerr, Plex, Jellyfin, download clients, VPN, cloud storage, and companion
 automation — with no expert knowledge required.
 
 [![CI](https://github.com/nordicnode/porthole/actions/workflows/ci.yml/badge.svg)](https://github.com/nordicnode/porthole/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/nordicnode/porthole)](https://github.com/nordicnode/porthole/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 </div>
