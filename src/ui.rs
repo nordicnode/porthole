@@ -925,26 +925,79 @@ fn render_care(f: &mut Frame, app: &App, area: Rect) {
         }
         CareView::PickExtras => {
             let e = &c.extras_pick;
-            let rows = [
+            // (section header, label, is_on, hint)
+            let rows: Vec<(Option<&str>, &str, bool, &str)> = vec![
                 (
+                    Some("Library"),
                     "Music (Lidarr)",
                     e.lidarr,
                     "Your music butler — follows artists, grabs albums.",
                 ),
                 (
+                    None,
                     "Subtitles (Bazarr)",
                     e.bazarr,
                     "Fetches subtitles for everything, automatically.",
                 ),
                 (
+                    None,
                     "Sports (Sportarr)",
                     e.sportarr,
                     "Follows your teams. Newer — opt-in.",
                 ),
                 (
+                    Some("Downloads"),
                     "Racing (autobrr)",
                     e.autobrr,
-                    "Grabs private-tracker releases the second they appear. Power users.",
+                    "Grabs private-tracker releases the second they appear.",
+                ),
+                (
+                    Some("Self-care"),
+                    "Unpack (Unpackerr)",
+                    e.unpackerr,
+                    "Auto-extracts archives so imports never stall.",
+                ),
+                (
+                    None,
+                    "Queue hygiene (Cleanuparr)",
+                    e.cleanuparr,
+                    "Kills stalled downloads, re-searches automatically.",
+                ),
+                (
+                    None,
+                    "Collection care (Maintainerr)",
+                    e.maintainerr,
+                    "Rules for aging media. Starts conservative — you review first.",
+                ),
+                (
+                    None,
+                    "Disk janitor (Janitorr)",
+                    e.janitorr,
+                    "Deletes watched-and-old media. ALWAYS dry-run first.",
+                ),
+                (
+                    Some("Stats"),
+                    "Plex stats (Tautulli)",
+                    e.tautulli,
+                    "Watch history for Plex. Maintainerr can use it.",
+                ),
+                (
+                    None,
+                    "Jellyfin stats (Jellystat)",
+                    e.jellystat,
+                    "Watch history for Jellyfin (+ PostgreSQL).",
+                ),
+                (
+                    Some("Sharing"),
+                    "Invites (Wizarr)",
+                    e.wizarr,
+                    "Invite links for friends/family. Zero explanation needed.",
+                ),
+                (
+                    None,
+                    "Collections (Kometa)",
+                    e.kometa,
+                    "Plex collections + posters. Needs a TMDb key. Plex only.",
                 ),
             ];
             let mut items: Vec<ListItem> = vec![ListItem::new(Line::from(vec![Span::styled(
@@ -953,8 +1006,14 @@ fn render_care(f: &mut Frame, app: &App, area: Rect) {
                     .fg(Color::White)
                     .add_modifier(Modifier::ITALIC),
             )]))];
-            for (i, (label, on, hint)) in rows.iter().enumerate() {
+            for (i, (section, label, on, hint)) in rows.iter().enumerate() {
                 let selected = i == c.selected;
+                if let Some(s) = section {
+                    items.push(ListItem::new(Line::from(vec![Span::styled(
+                        format!("— {s} —"),
+                        Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+                    )])));
+                }
                 items.push(ListItem::new(Text::from(vec![
                     Line::from(vec![
                         Span::styled(

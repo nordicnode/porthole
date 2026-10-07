@@ -7,6 +7,7 @@
 mod app;
 mod arr;
 mod care;
+mod companions;
 mod config;
 mod configarr;
 mod docker;

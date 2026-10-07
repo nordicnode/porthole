@@ -1102,7 +1102,106 @@ pub fn wire_extras(install_dir: &Path, tx: &Sender<CareEvent>) -> Result<()> {
             _ => log("[warn] couldn't read the Sonarr/Radarr API keys for Bazarr setup"),
         }
     }
+
+    // ── Companion automation wiring ──
+    wire_companions(install_dir, tx)?;
+
     log("[ok] extras wired.");
+    Ok(())
+}
+
+/// Wire the Phase 10 companions: automate what's verifiable,
+/// guide the rest with exact values.
+fn wire_companions(install_dir: &Path, tx: &Sender<CareEvent>) -> Result<()> {
+    let log = |s: &str| {
+        let _ = tx.send(CareEvent::Log(s.to_string()));
+    };
+    let yml = std::fs::read_to_string(install_dir.join("docker-compose.override.yml"))
+        .unwrap_or_default();
+
+    // Unpackerr: write the env file with real *arr API keys.
+    if yml.contains("unpackerr:") {
+        match (
+            crate::configarr::arr_api_key(install_dir, "sonarr"),
+            crate::configarr::arr_api_key(install_dir, "radarr"),
+        ) {
+            (Ok(skey), Ok(rkey)) => {
+                let lkey = crate::configarr::arr_api_key(install_dir, "lidarr").ok();
+                let env = crate::companions::unpackerr_env(&skey, &rkey, lkey.as_deref());
+                let dest = install_dir.join("configs/unpackerr/unpackerr.env");
+                if let Some(p) = dest.parent() {
+                    std::fs::create_dir_all(p)?;
+                }
+                std::fs::write(&dest, env)?;
+                log("[ok] Unpackerr knows Sonarr/Radarr (restart it to pick up the keys)");
+            }
+            _ => log("[warn] couldn't read *arr API keys for Unpackerr"),
+        }
+    }
+
+    // Janitorr: drop in a dry-run-first config.
+    if yml.contains("janitorr:") {
+        let dest = install_dir.join("configs/janitorr/application.yml");
+        if !dest.exists() {
+            if let Some(p) = dest.parent() {
+                std::fs::create_dir_all(p)?;
+            }
+            std::fs::write(&dest, crate::companions::janitorr_config())?;
+            log("[ok] Janitorr configured — DRY-RUN on. Review before enabling.");
+        }
+    }
+
+    // Kometa: drop in a starter config (user fills in tokens).
+    if yml.contains("kometa:") {
+        let dest = install_dir.join("configs/kometa/config.yml");
+        if !dest.exists() {
+            if let Some(p) = dest.parent() {
+                std::fs::create_dir_all(p)?;
+            }
+            std::fs::write(&dest, crate::companions::kometa_config())?;
+            log("[ok] Kometa starter config written — add your Plex token + TMDb key");
+        }
+    }
+
+    // Guided: Cleanuparr, Maintainerr, Tautulli, Wizarr.
+    if yml.contains("cleanuparr:") {
+        if let (Ok(skey), Ok(rkey)) = (
+            crate::configarr::arr_api_key(install_dir, "sonarr"),
+            crate::configarr::arr_api_key(install_dir, "radarr"),
+        ) {
+            log("[in] Cleanuparr needs its *arr connections — once:");
+            for line in crate::companions::cleanuparr_manual_steps(&skey, &rkey) {
+                log(&format!("  • {line}"));
+            }
+        }
+    }
+    if yml.contains("maintainerr:") {
+        log("[in] Maintainerr setup — start conservative:");
+        for line in crate::companions::maintainerr_manual_steps() {
+            log(&format!("  • {line}"));
+        }
+    }
+    if yml.contains("tautulli:") {
+        // Plex token from Preferences.xml (like media_server.rs).
+        if let Ok(token) = crate::media_server::plex_token(install_dir) {
+            log("[in] Tautulli needs its Plex connection + API enabled:");
+            for line in crate::companions::tautulli_manual_steps(&token) {
+                log(&format!("  • {line}"));
+            }
+        }
+    }
+    if yml.contains("wizarr:") {
+        log("[in] Wizarr — invite links for friends/family:");
+        for line in crate::companions::wizarr_manual_steps() {
+            log(&format!("  • {line}"));
+        }
+    }
+    if yml.contains("kometa:") {
+        log("[in] Kometa — Plex collections (needs your tokens):");
+        for line in crate::companions::kometa_manual_steps() {
+            log(&format!("  • {line}"));
+        }
+    }
     Ok(())
 }
 

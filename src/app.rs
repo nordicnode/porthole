@@ -1155,6 +1155,14 @@ impl CareState {
                                     self.extras_pick.bazarr = yml.contains("bazarr:");
                                     self.extras_pick.sportarr = yml.contains("sportarr:");
                                     self.extras_pick.autobrr = yml.contains("autobrr:");
+                                    self.extras_pick.unpackerr = yml.contains("unpackerr:");
+                                    self.extras_pick.cleanuparr = yml.contains("cleanuparr:");
+                                    self.extras_pick.maintainerr = yml.contains("maintainerr:");
+                                    self.extras_pick.janitorr = yml.contains("janitorr:");
+                                    self.extras_pick.tautulli = yml.contains("tautulli:");
+                                    self.extras_pick.jellystat = yml.contains("jellystat:");
+                                    self.extras_pick.wizarr = yml.contains("wizarr:");
+                                    self.extras_pick.kometa = yml.contains("kometa:");
                                 }
                             }
                             self.selected = 0;
@@ -1188,12 +1196,20 @@ impl CareState {
             },
             CareView::PickExtras => match code {
                 KeyCode::Up => self.selected = self.selected.saturating_sub(1),
-                KeyCode::Down => self.selected = (self.selected + 1).min(2),
+                KeyCode::Down => self.selected = (self.selected + 1).min(11),
                 KeyCode::Char(' ') => match self.selected {
                     0 => self.extras_pick.lidarr = !self.extras_pick.lidarr,
                     1 => self.extras_pick.bazarr = !self.extras_pick.bazarr,
                     2 => self.extras_pick.sportarr = !self.extras_pick.sportarr,
                     3 => self.extras_pick.autobrr = !self.extras_pick.autobrr,
+                    4 => self.extras_pick.unpackerr = !self.extras_pick.unpackerr,
+                    5 => self.extras_pick.cleanuparr = !self.extras_pick.cleanuparr,
+                    6 => self.extras_pick.maintainerr = !self.extras_pick.maintainerr,
+                    7 => self.extras_pick.janitorr = !self.extras_pick.janitorr,
+                    8 => self.extras_pick.tautulli = !self.extras_pick.tautulli,
+                    9 => self.extras_pick.jellystat = !self.extras_pick.jellystat,
+                    10 => self.extras_pick.wizarr = !self.extras_pick.wizarr,
+                    11 => self.extras_pick.kometa = !self.extras_pick.kometa,
                     _ => {}
                 },
                 KeyCode::Enter => {

@@ -1,5 +1,6 @@
-//! Optional fleet members: Lidarr (music), Bazarr (subtitles),
-//! Sportarr (sports).
+//! Optional fleet members: media (Lidarr/Bazarr/Sportarr), downloads
+//! (autobrr), maintenance (Unpackerr/Cleanuparr/Maintainerr/Janitorr),
+//! stats (Tautulli/Jellystat), sharing (Wizarr/Kometa).
 //!
 //! Porthole doesn't patch the installer's `docker-compose.yml`. Instead it
 //! generates `docker-compose.override.yml`, which the installer's compose
@@ -13,15 +14,39 @@ use std::path::Path;
 /// Which optional services the user wants.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Extras {
+    // Media
     pub lidarr: bool,
     pub bazarr: bool,
     pub sportarr: bool,
+    // Downloads
     pub autobrr: bool,
+    // Maintenance (the fleet looks after itself)
+    pub unpackerr: bool,
+    pub cleanuparr: bool,
+    pub maintainerr: bool,
+    pub janitorr: bool,
+    // Stats (one per media server)
+    pub tautulli: bool,
+    pub jellystat: bool,
+    // Sharing
+    pub wizarr: bool,
+    pub kometa: bool,
 }
 
 impl Extras {
     pub fn any(&self) -> bool {
-        self.lidarr || self.bazarr || self.sportarr || self.autobrr
+        self.lidarr
+            || self.bazarr
+            || self.sportarr
+            || self.autobrr
+            || self.unpackerr
+            || self.cleanuparr
+            || self.maintainerr
+            || self.janitorr
+            || self.tautulli
+            || self.jellystat
+            || self.wizarr
+            || self.kometa
     }
 }
 
@@ -95,6 +120,184 @@ pub fn render_override_yml(extras: &Extras) -> String {
              \x20\x20\x20\x20\x20 - \"${CONFIG_DIR}/autobrr:/config\"\n",
         );
     }
+    // ── Maintenance companions ──
+    if extras.unpackerr {
+        // No port, no UI — polls the *arrs via API. API keys are written
+        // by Care (they don't exist until the *arrs first run).
+        out.push_str(
+            "  unpackerr:\n\
+             \x20\x20\x20 image: golift/unpackerr:latest\n\
+             \x20\x20\x20 container_name: unpackerr\n\
+             \x20\x20\x20 restart: unless-stopped\n\
+             \x20\x20\x20 networks:\n\
+             \x20\x20\x20\x20\x20 - media-network\n\
+             \x20\x20\x20 env_file:\n\
+             \x20\x20\x20\x20\x20 - \"${CONFIG_DIR}/unpackerr/unpackerr.env\"\n\
+             \x20\x20\x20 environment:\n\
+             \x20\x20\x20\x20\x20 - PUID=${PUID:-1000}\n\
+             \x20\x20\x20\x20\x20 - PGID=${PGID:-1000}\n\
+             \x20\x20\x20\x20\x20 - TZ=${TZ:-UTC}\n\
+             \x20\x20\x20\x20\x20 - UN_INTERVAL=2m\n\
+             \x20\x20\x20 volumes:\n\
+             \x20\x20\x20\x20\x20 - \"${CONFIG_DIR}/unpackerr:/config\"\n\
+             \x20\x20\x20\x20\x20 - \"${DATA_DIR}:/data\"\n",
+        );
+    }
+    if extras.cleanuparr {
+        out.push_str(
+            "  cleanuparr:\n\
+             \x20\x20\x20 image: ghcr.io/cleanuparr/cleanuparr:latest\n\
+             \x20\x20\x20 container_name: cleanuparr\n\
+             \x20\x20\x20 restart: unless-stopped\n\
+             \x20\x20\x20 networks:\n\
+             \x20\x20\x20\x20\x20 - media-network\n\
+             \x20\x20\x20 ports:\n\
+             \x20\x20\x20\x20\x20 - \"127.0.0.1:11011:11011\"\n\
+             \x20\x20\x20 environment:\n\
+             \x20\x20\x20\x20\x20 - PUID=${PUID:-1000}\n\
+             \x20\x20\x20\x20\x20 - PGID=${PGID:-1000}\n\
+             \x20\x20\x20\x20\x20 - TZ=${TZ:-UTC}\n\
+             \x20\x20\x20\x20\x20 - PORT=11011\n\
+             \x20\x20\x20 volumes:\n\
+             \x20\x20\x20\x20\x20 - \"${CONFIG_DIR}/cleanuparr:/config\"\n",
+        );
+    }
+    if extras.maintainerr {
+        out.push_str(
+            "  maintainerr:\n\
+             \x20\x20\x20 image: ghcr.io/maintainerr/maintainerr:latest\n\
+             \x20\x20\x20 container_name: maintainerr\n\
+             \x20\x20\x20 restart: unless-stopped\n\
+             \x20\x20\x20 networks:\n\
+             \x20\x20\x20\x20\x20 - media-network\n\
+             \x20\x20\x20 ports:\n\
+             \x20\x20\x20\x20\x20 - \"127.0.0.1:6246:6246\"\n\
+             \x20\x20\x20 environment:\n\
+             \x20\x20\x20\x20\x20 - PUID=${PUID:-1000}\n\
+             \x20\x20\x20\x20\x20 - PGID=${PGID:-1000}\n\
+             \x20\x20\x20\x20\x20 - TZ=${TZ:-UTC}\n\
+             \x20\x20\x20 volumes:\n\
+             \x20\x20\x20\x20\x20 - \"${CONFIG_DIR}/maintainerr:/opt/data\"\n",
+        );
+    }
+    if extras.janitorr {
+        out.push_str(
+            "  janitorr:\n\
+             \x20\x20\x20 image: ghcr.io/schaka/janitorr:latest\n\
+             \x20\x20\x20 container_name: janitorr\n\
+             \x20\x20\x20 restart: unless-stopped\n\
+             \x20\x20\x20 networks:\n\
+             \x20\x20\x20\x20\x20 - media-network\n\
+             \x20\x20\x20 ports:\n\
+             \x20\x20\x20\x20\x20 - \"127.0.0.1:8978:8978\"\n\
+             \x20\x20\x20 environment:\n\
+             \x20\x20\x20\x20\x20 - PUID=${PUID:-1000}\n\
+             \x20\x20\x20\x20\x20 - PGID=${PGID:-1000}\n\
+             \x20\x20\x20\x20\x20 - TZ=${TZ:-UTC}\n\
+             \x20\x20\x20 volumes:\n\
+             \x20\x20\x20\x20\x20 - \"${CONFIG_DIR}/janitorr:/config\"\n",
+        );
+    }
+    // ── Stats (one per media server) ──
+    if extras.tautulli {
+        out.push_str(
+            "  tautulli:\n\
+             \x20\x20\x20 image: lscr.io/linuxserver/tautulli:latest\n\
+             \x20\x20\x20 container_name: tautulli\n\
+             \x20\x20\x20 restart: unless-stopped\n\
+             \x20\x20\x20 networks:\n\
+             \x20\x20\x20\x20\x20 - media-network\n\
+             \x20\x20\x20 ports:\n\
+             \x20\x20\x20\x20\x20 - \"127.0.0.1:8181:8181\"\n\
+             \x20\x20\x20 environment:\n\
+             \x20\x20\x20\x20\x20 - PUID=${PUID:-1000}\n\
+             \x20\x20\x20\x20\x20 - PGID=${PGID:-1000}\n\
+             \x20\x20\x20\x20\x20 - TZ=${TZ:-UTC}\n\
+             \x20\x20\x20 volumes:\n\
+             \x20\x20\x20\x20\x20 - \"${CONFIG_DIR}/tautulli:/config\"\n",
+        );
+    }
+    if extras.jellystat {
+        // Jellystat needs PostgreSQL — provisioned alongside.
+        out.push_str(
+            "  jellystat-db:\n\
+             \x20\x20\x20 image: postgres:16-alpine\n\
+             \x20\x20\x20 container_name: jellystat-db\n\
+             \x20\x20\x20 restart: unless-stopped\n\
+             \x20\x20\x20 networks:\n\
+             \x20\x20\x20\x20\x20 - media-network\n\
+             \x20\x20\x20 environment:\n\
+             \x20\x20\x20\x20\x20 - POSTGRES_USER=jellystat\n\
+             \x20\x20\x20\x20\x20 - POSTGRES_DB=jfstat\n\
+             \x20\x20\x20\x20\x20 - POSTGRES_PASSWORD_FILE=/run/secrets/db_password\n\
+             \x20\x20\x20 secrets:\n\
+             \x20\x20\x20\x20\x20 - db_password\n\
+             \x20\x20\x20 volumes:\n\
+             \x20\x20\x20\x20\x20 - \"${CONFIG_DIR}/jellystat-db:/var/lib/postgresql/data\"\n",
+        );
+        out.push_str(
+            "  jellystat:\n\
+             \x20\x20\x20 image: cyfershepard/jellystat:latest\n\
+             \x20\x20\x20 container_name: jellystat\n\
+             \x20\x20\x20 restart: unless-stopped\n\
+             \x20\x20\x20 networks:\n\
+             \x20\x20\x20\x20\x20 - media-network\n\
+             \x20\x20\x20 ports:\n\
+             \x20\x20\x20\x20\x20 - \"127.0.0.1:3000:3000\"\n\
+             \x20\x20\x20 depends_on:\n\
+             \x20\x20\x20\x20\x20 jellystat-db:\n\
+             \x20\x20\x20\x20\x20\x20\x20 condition: service_started\n\
+             \x20\x20\x20 environment:\n\
+             \x20\x20\x20\x20\x20 - PUID=${PUID:-1000}\n\
+             \x20\x20\x20\x20\x20 - PGID=${PGID:-1000}\n\
+             \x20\x20\x20\x20\x20 - TZ=${TZ:-UTC}\n\
+             \x20\x20\x20\x20\x20 - POSTGRES_USER=jellystat\n\
+             \x20\x20\x20\x20\x20 - POSTGRES_DB=jfstat\n\
+             \x20\x20\x20\x20\x20 - POSTGRES_IP=jellystat-db\n\
+             \x20\x20\x20\x20\x20 - POSTGRES_PORT=5432\n\
+             \x20\x20\x20\x20\x20 - POSTGRES_PASSWORD_FILE=/run/secrets/db_password\n\
+             \x20\x20\x20 secrets:\n\
+             \x20\x20\x20\x20\x20 - db_password\n\
+             \x20\x20\x20 volumes:\n\
+             \x20\x20\x20\x20\x20 - \"${CONFIG_DIR}/jellystat:/app/backend/backup\"\n",
+        );
+    }
+    // ── Sharing ──
+    if extras.wizarr {
+        out.push_str(
+            "  wizarr:\n\
+             \x20\x20\x20 image: ghcr.io/wizarrrr/wizarr:latest\n\
+             \x20\x20\x20 container_name: wizarr\n\
+             \x20\x20\x20 restart: unless-stopped\n\
+             \x20\x20\x20 networks:\n\
+             \x20\x20\x20\x20\x20 - media-network\n\
+             \x20\x20\x20 ports:\n\
+             \x20\x20\x20\x20\x20 - \"127.0.0.1:5690:5690\"\n\
+             \x20\x20\x20 environment:\n\
+             \x20\x20\x20\x20\x20 - PUID=${PUID:-1000}\n\
+             \x20\x20\x20\x20\x20 - PGID=${PGID:-1000}\n\
+             \x20\x20\x20\x20\x20 - TZ=${TZ:-UTC}\n\
+             \x20\x20\x20 volumes:\n\
+             \x20\x20\x20\x20\x20 - \"${CONFIG_DIR}/wizarr:/data\"\n",
+        );
+    }
+    if extras.kometa {
+        out.push_str(
+            "  kometa:\n\
+             \x20\x20\x20 image: ghcr.io/kometa-team/kometa:latest\n\
+             \x20\x20\x20 container_name: kometa\n\
+             \x20\x20\x20 restart: unless-stopped\n\
+             \x20\x20\x20 networks:\n\
+             \x20\x20\x20\x20\x20 - media-network\n\
+             \x20\x20\x20 environment:\n\
+             \x20\x20\x20\x20\x20 - PUID=${PUID:-1000}\n\
+             \x20\x20\x20\x20\x20 - PGID=${PGID:-1000}\n\
+             \x20\x20\x20\x20\x20 - TZ=${TZ:-UTC}\n\
+             \x20\x20\x20\x20\x20 - KOMETA_RUN=true\n\
+             \x20\x20\x20 volumes:\n\
+             \x20\x20\x20\x20\x20 - \"${CONFIG_DIR}/kometa:/config\"\n",
+        );
+    }
     if extras.sportarr {
         out.push_str(
             "  sportarr:\n\
@@ -144,6 +347,24 @@ pub fn ensure_data_dirs(install_dir: &Path, extras: &Extras) -> Result<()> {
     for d in dirs {
         std::fs::create_dir_all(data.join(d)).context("creating data dir")?;
     }
+    if extras.jellystat {
+        // PostgreSQL password (Docker secret). Generated once, kept.
+        let pw_path = install_dir.join("configs/jellystat-db/password.txt");
+        if !pw_path.exists() {
+            if let Some(p) = pw_path.parent() {
+                std::fs::create_dir_all(p)?;
+            }
+            let mut bytes = [0u8; 24];
+            getrandom::fill(&mut bytes).map_err(|e| anyhow::anyhow!("no entropy: {e}"))?;
+            let pw: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+            std::fs::write(&pw_path, pw)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(&pw_path, std::fs::Permissions::from_mode(0o600));
+            }
+        }
+    }
     Ok(())
 }
 
@@ -171,6 +392,14 @@ mod tests {
             bazarr: false,
             sportarr: true,
             autobrr: true,
+            unpackerr: true,
+            cleanuparr: true,
+            maintainerr: true,
+            janitorr: true,
+            tautulli: true,
+            jellystat: true,
+            wizarr: true,
+            kometa: true,
         };
         let yml = render_override_yml(&e);
         assert!(yml.contains("lidarr:"));

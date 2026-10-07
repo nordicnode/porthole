@@ -555,7 +555,7 @@ remains the zero-config path.
 
 ## Phase 10 — The fleet looks after itself: companion automation
 
-- [ ] **Janitorr** — schedule-based "watched it, delete it" cleaning
+- [x] **Janitorr** — schedule-based "watched it, delete it" cleaning
       for the truly disk-poor (moved from Phase 5: it's a companion
       service, not small-disk core). Starts dry-run; the cache's LRU
       eviction already keeps recently-watched warm.
@@ -564,31 +564,31 @@ The thesis extended: not just installed and wired, but *maintained*
 without expertise. Each of these is actively maintained and API-wired
 to the fleet.
 
-- [ ] **Maintainerr** (v3.30.0 Oct 2026) — rule-based collection
+- [x] **Maintainerr** (v3.30.0 Oct 2026) — rule-based collection
       management: deletes watched-and-aging media, cleans up Seerr
       requests. Wiring: needs a watch-stats source, which chains to the
       next two. This is the "counterweight to hoarding."
-- [ ] **Tautulli** (Plex, v2.18.1) / **Jellystat** (Jellyfin, v1.1.12) —
+- [x] **Tautulli** (Plex, v2.18.1) / **Jellystat** (Jellyfin, v1.1.12) —
       watch stats and monitoring, one per the chosen media server.
       Wiring: API tokens auto-configured; Jellystat's REST API feeds
       Maintainerr directly.
-- [ ] **Cleanuparr** (v2.10.6) — queue hygiene: kills stalled/blocked
+- [x] **Cleanuparr** (v2.10.6) — queue hygiene: kills stalled/blocked
       downloads and re-searches. Wiring: *arr + download-client APIs
       Porthole already holds. (Run *or* Decluttarr, not both.)
-- [ ] **Unpackerr** — auto-extracts archives so *arr imports never stall.
+- [x] **Unpackerr** — auto-extracts archives so *arr imports never stall.
       Tiny, harmless, default-on candidate.
-- [ ] **Configarr** — syncs TRaSH-Guides quality profiles and custom
+- [x] **Configarr** — syncs TRaSH-Guides quality profiles and custom
       formats into Sonarr/Radarr/Lidarr. This is the "sane defaults"
       play: the single biggest no-expert-knowledge win in the *arr
       world, and exactly Porthole's thesis. Promoted to a core
       architectural piece — see Phase 6 for the full design
       (generated `config.yml`, the four-question budget, exact TRaSH
       profiles and naming, Decypharr wiring specifics).
-- [ ] **Wizarr** (v2026.7.0) — invite links and onboarding for
+- [x] **Wizarr** (v2026.7.0) — invite links and onboarding for
       friends/family (Plex/Jellyfin/Emby). Wiring: media-server API +
       Seerr link. Strongest fit for the thesis: sharing the fleet with
       non-technical people, zero explanation needed.
-- [ ] Kometa (Plex collections/metadata automation) — strong for Plex
+- [x] Kometa (Plex collections/metadata automation) — strong for Plex
       users; skip entirely on Jellyfin (no equivalent). Optional,
       Plex-profile only.
 
@@ -620,6 +620,19 @@ to the fleet.
   Seerr key → Maintainerr.
 - Footprint: ~9 more containers (fleet ≈ 20), +2–3 GB RAM idle.
   The wizard should say this plainly.
+
+**Phase 10 status: 10/10.** Shipped 2026-10-07: `src/companions.rs`
+(Unpackerr env, Janitorr dry-run config, Kometa starter, guided steps).
+All 8 companions join the extras picker (grouped: Library/Downloads/
+Self-care/Stats/Sharing): Unpackerr (`golift/unpackerr`, env-file with
+*arr API keys), Cleanuparr (`:11011`, guided), Maintainerr (`:6246`,
+guided, review-first), Janitorr (`:8978`, dry-run: true always),
+Tautulli (`:8181`, Plex token + API-enable guided), Jellystat (`:3000`
++ PostgreSQL via Docker secret), Wizarr (`:5690`, guided), Kometa
+(Plex-only, starter config, TMDb key guided). 8 service definitions +
+6 wiring-map entries. Honest boundaries: Cleanuparr/Maintainerr/
+Tautulli/Wizarr/Kometa are guided (config schemas vary); Unpackerr
+and Janitorr are fully automated. Footprint note in picker hints.
 
 ## Explicitly deferred — researched, not planned
 

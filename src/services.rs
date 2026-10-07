@@ -112,6 +112,62 @@ pub static SERVICES: &[Service] = &[
         port: 1867,
         group: "Extras",
     },
+    Service {
+        id: "unpackerr",
+        name: "Unpackerr",
+        plain: "The unwrapper. Extracts archives the moment they finish so imports never stall.",
+        port: 0, // no UI
+        group: "Care",
+    },
+    Service {
+        id: "cleanuparr",
+        name: "Cleanuparr",
+        plain: "Queue hygiene. Kills stalled downloads and re-searches automatically.",
+        port: 11011,
+        group: "Care",
+    },
+    Service {
+        id: "maintainerr",
+        name: "Maintainerr",
+        plain: "Collection care. Rules for aging media — you review before anything happens.",
+        port: 6246,
+        group: "Care",
+    },
+    Service {
+        id: "janitorr",
+        name: "Janitorr",
+        plain: "Disk janitor. Deletes watched-and-old media. Always dry-run first.",
+        port: 8978,
+        group: "Care",
+    },
+    Service {
+        id: "tautulli",
+        name: "Tautulli",
+        plain: "Plex watch stats. Feeds Maintainerr with what you actually watched.",
+        port: 8181,
+        group: "Care",
+    },
+    Service {
+        id: "jellystat",
+        name: "Jellystat",
+        plain: "Jellyfin watch stats (+ its own database). Feeds Maintainerr and Janitorr.",
+        port: 3000,
+        group: "Care",
+    },
+    Service {
+        id: "wizarr",
+        name: "Wizarr",
+        plain: "Invite links for friends and family. They join with zero explanation needed.",
+        port: 5690,
+        group: "Care",
+    },
+    Service {
+        id: "kometa",
+        name: "Kometa",
+        plain: "Plex collections and posters, automated. Plex only.",
+        port: 0, // no UI; runs on schedule
+        group: "Care",
+    },
 ];
 
 /// The wiring map. This is Porthole's real product: every introduction below
@@ -227,6 +283,31 @@ pub static INTEGRATIONS: &[Integration] = &[
         from: "rclone",
         to: "Sonarr",
         plain: "Finished downloads move to the cloud automatically every 30 minutes — Sonarr's library just keeps growing.",
+    },
+    Integration {
+        from: "Unpackerr",
+        to: "Sonarr",
+        plain: "Extracts archives the moment they finish — Sonarr never stalls waiting on a RAR.",
+    },
+    Integration {
+        from: "Cleanuparr",
+        to: "Sonarr",
+        plain: "Kills stalled downloads and re-searches automatically — the queue cleans itself.",
+    },
+    Integration {
+        from: "Tautulli",
+        to: "Maintainerr",
+        plain: "Watch history feeds the rules — Maintainerr knows what you actually watched.",
+    },
+    Integration {
+        from: "Maintainerr",
+        to: "Seerr",
+        plain: "When media ages out, its requests are cleaned up too — no orphaned asks.",
+    },
+    Integration {
+        from: "Wizarr",
+        to: "Seerr",
+        plain: "Invitees get a request account automatically — they can ask for media on day one.",
     },
     Integration {
         from: "Decypharr",
