@@ -159,6 +159,39 @@ all slot into the existing wiring with no new infrastructure.
       ("Which of these do you want?" — music / subtitles / sports,
       all default-on except Sportarr).
 
+**Traps & edge cases (researched Oct 2026):**
+
+- Lidarr is **`/api/v1`**, not v3 — a v3-assuming client breaks. All
+  metadata goes through Servarr's proxy (`api.lidarr.audio`), so rate
+  limits surface as HTTP 429s (Spotify import lists cause cache-miss
+  storms; list sync floor ~6h). Prowlarr syncs it as an app profile
+  with audio category **3000**. Decypharr's mock qBittorrent API
+  explicitly supports Lidarr. Profiles are codec-centric
+  (FLAC/MP3-320/AAC), unlike Sonarr/Radarr's resolution-centric ones.
+- Bazarr has **no env-var config surface** upstream — Sonarr/Radarr
+  addresses + API keys go through its UI/API (use container DNS
+  `sonarr`, never localhost). **Trap: its settings-save POST hangs
+  forever if Sonarr/Radarr is down** (unbounded retry inside the
+  request) — Porthole must bound it (`curl --max-time 60`) and apply
+  settings only when both *arrs answer. Never write ip/port without
+  both API keys (false "already configured"). Steady-state ~174 MiB —
+  cap at 768m, not 128m (OOM crash-loops). Health check: unauthenticated
+  `/ping`. Subtitle providers: OpenSubtitles.com needs a free account,
+  Podnapisi/Subscene are anonymous, avoid OpenSubtitles.org.
+  Bazarr+ fork adds a lot but **crash-loops on upstream databases**
+  (Alembic mismatch) — ship upstream, back up before any migration.
+- Sportarr's Sonarr-v3-compatible API is real (Series→League,
+  Episode→Event mapping) with an additive-only contract since
+  v4.0.1023. **Open bug #229: interactive search passes indexer
+  categories to Torznab/Newznab, so miscategorized sports releases
+  never match** — Porthole should broaden categories by default and
+  re-check the bug at implementation. It ships its own Plex/Jellyfin
+  metadata agents (use those, not the generic ones). IPTV DVR is
+  early alpha — don't promise it.
+- Cross-cutting: +0.75–1.5 GB RAM for the three; backups must capture
+  `*.db*` (while stopped) + `/config` with identical UID/GID and
+  path pairs.
+
 ## Phase 6 — The fleet looks after itself: companion automation
 
 The thesis extended: not just installed and wired, but *maintained*
@@ -189,6 +222,35 @@ to the fleet.
 - [ ] Kometa (Plex collections/metadata automation) — strong for Plex
       users; skip entirely on Jellyfin (no equivalent). Optional,
       Plex-profile only.
+
+**Traps & edge cases (researched Oct 2026):**
+
+- **Maintainerr deletes for real.** Always start in dry-run mode with
+  the pre-execution review page (v3.17.0+) — Porthole's default rule
+  set must be conservative, and the first run is review-only.
+- **Jellystat needs PostgreSQL** — that's a second container and
+  `pg_dump`-based backups, not just a volume copy. Porthole must
+  provision and back up both.
+- **Recyclarr reverts hand-edited profiles.** First sync merges, but
+  the next sync reverts any hand edits to *managed* profiles. Porthole
+  must warn before the user touches them (or better: never present the
+  managed profiles as editable).
+- **Kometa needs a TMDb API key** — another signup in the wizard, and
+  its sane default config is ~150–300 lines of YAML Porthole must
+  template, not ask about.
+- **Cleanuparr over Decluttarr** as the default (per-*arr scoping,
+  actively maintained) — and stall timeouts must be generous with
+  Decypharr in the chain, or it will kill slow-but-healthy debrid
+  downloads.
+- Dependency order matters: Postgres → Jellystat → Plex/Jellyfin →
+  Tautulli → Maintainerr; Prowlarr → *arrs → Recyclarr. Porthole must
+  bring them up in order and wire the full API-key chain itself: *arr
+  keys → Prowlarr/Bazarr/Cleanuparr/Unpackerr/Recyclarr/Maintainerr;
+  Plex token → Tautulli/Maintainerr/Wizarr/Kometa; Jellystat
+  x-api-token → Maintainerr/Janitorr; Tautulli key → Maintainerr;
+  Seerr key → Maintainerr.
+- Footprint: ~9 more containers (fleet ≈ 20), +2–3 GB RAM idle.
+  The wizard should say this plainly.
 
 ## Phase 7 — Storage: your drives, your cloud, encrypted
 
@@ -269,6 +331,39 @@ mixed-capacity redundancy, still roadmap-stage).
 - [ ] Doctor gains storage checks: mount answering? pool healthy?
       parity in sync? uploader running? All in plain language.
 
+**Traps & edge cases (researched Oct 2026):**
+
+- **`--allow-other` needs `user_allow_other` uncommented in
+  `/etc/fuse.conf`** or Plex gets permission denied on the mount.
+  Classic trap — Porthole checks and fixes (or instructs) at install.
+- **Wrong crypt password = silently empty folder**, no error.
+  Porthole always verifies against a known file after setup, and
+  **rclone.conf holds crypt passwords/salts + OAuth tokens** — back
+  it up encrypted (age/gpg), two locations, never plaintext in git.
+  Losing crypt secrets = data permanently unrecoverable.
+- **The hardlink trap, precisely**: two bind mounts of the same host
+  volume are different vfsmounts — `link()` returns EXDEV and the
+  *arrs silently fall back to FULL copies (229 GB of duplicates
+  measured). Rule: one `/data` root at the identical container path
+  everywhere; Porthole smoke-tests `touch`+`ln` *inside the
+  containers* at install.
+- **Google BYO OAuth, step by step**: Cloud project → enable Drive
+  API → consent screen **must be "Published"** (Testing = tokens die
+  every 7 days) → Desktop-app OAuth client → paste ID/secret into
+  `rclone config`. Every step is a drop-off point; Porthole walks it.
+- **750 GB/day Drive cap**: configure `--drive-stop-on-upload-limit`
+  + `--max-transfer 700G` so the uploader pauses instead of erroring.
+- **SnapRAID is not real-time** (nightly `snapraid sync`; parity disk
+  ≥ largest data disk) — Porthole must not imply live redundancy.
+- **pCloud is a secondary backend only** (throttling/abuse-flag
+  history) despite the good media profile; EU endpoint is
+  `eapi.pcloud.com`.
+- Upload mover: **systemd timer over cron**, `flock -n` lockfile,
+  `rclone move --min-age 15m --delete-empty-src-dirs --exclude
+  "*.partial~" --exclude "*.!qB"`; bandwidth timetable
+  `--bwlimit "01:00,off 08:00,30M"`; dynamic throttling via
+  `rclone rcd` + `rclone rc core/bwlimit`.
+
 ## Phase 8 — Download choice: providers, privacy, and beyond debrid-only
 
 Debrid stays the default path, but *which* debrid — and how private the
@@ -322,6 +417,40 @@ language on screen:
 - [ ] **autobrr** as the optional power-user add for private-tracker
       racing; **seedboxes** documented as the heavy-seeding alternative
       (largely redundant if you already pay for debrid).
+
+**Traps & edge cases (researched Oct 2026):**
+
+- **Plex must NOT go behind gluetun** — it kills remote access.
+  Only the downloaders (*arrs, qBittorrent, SABnzbd, Prowlarr) ride
+  `network_mode: service:gluetun`; Plex/Jellyfin/Seerr stay on the
+  normal network. LAN egress needs
+  `FIREWALL_OUTBOUND_SUBNETS=192.168.1.0/24`.
+- **qBittorrent 5.x generates a random admin password on first
+  run** — Porthole pre-seeds it (`QBITTORRENT_PASSWORD` or the PBKDF2
+  config key) or the user is locked out. Content Layout must be
+  **"Original"** (not "Create subfolder"), per-category paths
+  `/data/torrents/<category>` — the *arr import logic assumes this.
+- **Bind qBittorrent to the VPN interface too** (Settings → Advanced
+  → Network Interface → tun0/wg0): second layer if the firewall ever
+  fails open. Verify the whole chain: `curl ifconfig.me` from inside
+  a routed container shows the VPN IP, then stop gluetun and confirm
+  traffic dies.
+- **AllDebrid: 16 of 52 advertised hosts online** (Aug 2026 spot
+  check — re-verify at implementation) and a **12 req/s + 600/min per
+  key** API cap — budget across 4+ *arrs; use Prowlarr as the single
+  query point.
+- **Premiumize points**: per-GB point costs with daily regen — heavy
+  4K days can exhaust them; Porthole should surface the balance, not
+  just fail downloads.
+- **Decypharr per-provider quirks**: `debrids[]` entries carry
+  provider/api_key/rate_limit/refresh/workers; `default_download_action`
+  is `symlink|download|strm|none`. TorBox is the roughest provider,
+  Real-Debrid the smoothest. Per-*arr provider splits need a **second
+  Decypharr instance (:8283)** plus Remote Path Mapping — document,
+  don't automate, v1.
+- **autobrr has no shippable defaults** (v1.87.0) — filters are
+  inherently manual. Porthole deploys it, wires the *arr APIs, and
+  ships commented example filters. Honest, not magic.
 
 ## Phase 9 — Small-disk mode: the library lives in the cloud
 
@@ -380,6 +509,58 @@ with a small local disk. Researched October 2026.
 Note on ordering: this phase is listed ninth but is architecturally
 foundational — small-disk mode should be the *default* Porthole
 assumes, with big-local-disk as the advanced path, not the reverse.
+
+**Traps & edge cases (researched Oct 2026):**
+
+- **Decypharr DFS config, exact**: `mount.type: dfs`,
+  `mount_path: /mnt`, `cache_expiry: 24h`, `cache_dir: /cache/dfs`,
+  `disk_cache_size: 500MB`, `chunk_size: 8MB`, `read_ahead_size:
+  128MB`, and **`allow_other: true` is required**. Symlinks for *arr
+  "imports" resolve to the **FUSE path** — if the mount drops they
+  dangle, items become unplayable, and a scan with empty-trash ON
+  **wipes the library**. (See: empty-trash OFF, always.)
+- **Plex has NEVER supported .strm natively** — Jellyfin/Emby/Kodi
+  only. Plex needs a proxy shim (plex-strm-assistant :3000) plus an
+  ffprobe pass for real metadata. Format is a single-URL text file;
+  auth-walled URLs fail server-side (ffmpeg gets HTML). Offer .strm
+  mode for Jellyfin first; Plex shim is phase-9b.
+- **VFS sizing math**: 25–50% of free disk, minimum ~10–20 GB;
+  `vfs_cache_max_age` 12–24h ("recently watched stays warm").
+  `--buffer-size` is per-file RAM — keep it small.
+- **Plex cloud prefs** (via `PUT /:/prefs` or Preferences.xml, so
+  Porthole sets them programmatically): preview thumbnails NEVER,
+  extensive media analysis OFF, empty trash OFF, intro/credits
+  detection OFF (it decodes the whole file), periodic full scan OFF,
+  relay OFF.
+- **Transcode math**: `./transcode:/transcode` + `TRANS_DIR`, 20–30 GB
+  typical, 50 GB+ for 4K/multi-stream; a full disk gives "Not enough
+  disk space to convert this item". ~2,000 PassMark per 1080p software
+  transcode (~12,000 for 4K — Porthole should steer 4K-transcode boxes
+  to direct play, not promise transcoding).
+- **Mount resilience, exact**: systemd `Type=notify`,
+  `ExecStop=fusermount -uz`, `Restart=always`; health via
+  `mountpoint -q`; on ENOTCONN: lazy unmount → restart mount →
+  verify → trigger Plex/Jellyfin refresh. Doctor automates this
+  sequence.
+- **Janitorr is a loaded gun**: port 8978, `application.yml`, needs
+  Jellystat (or Streamystats — not both), **`dry-run: true` is the
+  default** (keep it), "Leaving Soon" collections as the review
+  queue. **Issue #234: "deleted half of library"** — bad Jellystat
+  watch data + aggressive expiration = mass deletion. And Jellyfin
+  deletes need a **dedicated user account** — an API key alone is
+  insufficient. Porthole gates Janitorr behind a watched-data sanity
+  check and keeps dry-run until the user explicitly arms it.
+- **Bandwidth honesty**: measure at install (`speedtest-cli` +
+  server→client iperf3). Thresholds: <15 Mbps = 1080p risky, 25 Mbps
+  = compressed 4K, **60–80+ Mbps sustained for 4K remux** (typical
+  remux ~100 Mbps peaks — budget +50% headroom for VBR). If the pipe
+  can't do it, Porthole says so before promising 4K.
+
+**Re-check at implementation** (index-researched Oct 2026, no live
+verification — confirm before building): AllDebrid live host status;
+Sportarr bug #229 fix state; Premiumize exact point costs (readable
+via API); pCloud 2026 policy fine print; Bazarr+ fork vs conservative
+upstream 1.6.x; Jellyfin 12.x API parity for Janitorr deletes.
 
 ## Explicitly deferred — researched, not planned
 
