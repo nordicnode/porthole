@@ -5,6 +5,7 @@
 //! Radarr, Seerr, Plex and Jellyfin. No expert knowledge required.
 
 mod app;
+mod docker;
 mod provision;
 mod services;
 mod ui;

@@ -2,21 +2,23 @@
 //! step is described the way you'd explain it to a friend.
 
 use ratatui::{
-    layout::{Constraint, Direction, Layout},
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Gauge, List, ListItem, Paragraph, Tabs, Wrap},
+    widgets::{Block, Borders, List, ListItem, Paragraph, Tabs, Wrap},
     Frame,
 };
 
 use crate::{
-    app::{App, Screen},
+    app::{App, Screen, WizardPhase},
+    docker::ServiceStatus,
     provision::{StepStatus, STEPS},
     services::{INTEGRATIONS, SERVICES},
 };
 
 const ACCENT: Color = Color::Cyan;
 const GOOD: Color = Color::Green;
+const BAD: Color = Color::Red;
 const DIM: Color = Color::DarkGray;
 const WARM: Color = Color::Yellow;
 
@@ -98,7 +100,7 @@ pub fn render(f: &mut Frame, app: &App) {
         Span::styled("↑↓", Style::default().fg(ACCENT)),
         Span::styled(" move   ", Style::default().fg(DIM)),
         Span::styled("Enter", Style::default().fg(ACCENT)),
-        Span::styled(" start setup   ", Style::default().fg(DIM)),
+        Span::styled(" confirm   ", Style::default().fg(DIM)),
         Span::styled("q", Style::default().fg(ACCENT)),
         Span::styled(" quit", Style::default().fg(DIM)),
     ]))
@@ -110,7 +112,17 @@ pub fn render(f: &mut Frame, app: &App) {
     f.render_widget(footer, root[2]);
 }
 
-fn render_dashboard(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
+fn status_span(status: ServiceStatus) -> Span<'static> {
+    match status {
+        ServiceStatus::Running => Span::styled("● running", Style::default().fg(GOOD)),
+        ServiceStatus::Stopped => Span::styled("○ stopped", Style::default().fg(DIM)),
+        ServiceStatus::Failed => Span::styled("✖ failed", Style::default().fg(BAD)),
+        ServiceStatus::NotInstalled => Span::styled("○ not set up", Style::default().fg(DIM)),
+        ServiceStatus::Unknown => Span::styled("? docker not found", Style::default().fg(WARM)),
+    }
+}
+
+fn render_dashboard(f: &mut Frame, app: &App, area: Rect) {
     let mut items: Vec<ListItem> = Vec::new();
     let mut last_group = "";
     for (i, svc) in SERVICES.iter().enumerate() {
@@ -135,12 +147,22 @@ fn render_dashboard(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
         } else {
             Style::default().fg(Color::White)
         };
+        let status = if svc.id == "torbox" {
+            Span::styled("☁ cloud service", Style::default().fg(DIM))
+        } else {
+            status_span(
+                app.statuses
+                    .get(svc.id)
+                    .copied()
+                    .unwrap_or(ServiceStatus::NotInstalled),
+            )
+        };
         items.push(ListItem::new(Text::from(vec![
             Line::from(vec![
                 Span::styled(marker, Style::default().fg(ACCENT)),
                 Span::styled(format!("{:<10}", svc.name), style),
                 Span::styled(format!("{:<8}", port), Style::default().fg(DIM)),
-                Span::styled("○ not set up", Style::default().fg(DIM)),
+                status,
             ]),
             Line::from(vec![
                 Span::raw("    "),
@@ -148,11 +170,230 @@ fn render_dashboard(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
             ]),
         ])));
     }
-    let list = List::new(items).block(title_block("Fleet — every service, one glance"));
+    if app.docker_missing {
+        items.push(ListItem::new(Line::from(vec![Span::styled(
+            "Docker isn't installed here — the Setup wizard will offer to install it.",
+            Style::default().fg(WARM),
+        )])));
+    }
+    let list = List::new(items).block(title_block(
+        "Fleet — every service, one glance (r to refresh)",
+    ));
     f.render_widget(list, area);
 }
 
-fn render_wizard(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
+fn render_wizard(f: &mut Frame, app: &App, area: Rect) {
+    match app.wizard.phase {
+        WizardPhase::Prefs => render_prefs(f, app, area),
+        WizardPhase::Plan => render_plan(f, app, area),
+        WizardPhase::Running | WizardPhase::Done(_) => render_progress(f, app, area),
+    }
+}
+
+fn form_row(
+    label: &str,
+    value: &str,
+    hint: &str,
+    selected: bool,
+    masked: bool,
+) -> ListItem<'static> {
+    let shown = if masked {
+        "•".repeat(value.chars().count())
+    } else {
+        value.to_string()
+    };
+    let cursor = if selected { "▌" } else { "" };
+    ListItem::new(Text::from(vec![
+        Line::from(vec![
+            Span::styled(
+                if selected { "▸ " } else { "  " },
+                Style::default().fg(ACCENT),
+            ),
+            Span::styled(
+                format!("{label:<14}"),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(format!("{shown}{cursor}"), Style::default().fg(ACCENT)),
+        ]),
+        Line::from(vec![
+            Span::raw("    "),
+            Span::styled(hint.to_string(), Style::default().fg(DIM)),
+        ]),
+    ]))
+}
+
+fn render_prefs(f: &mut Frame, app: &App, area: Rect) {
+    let w = &app.wizard;
+    let p = &w.prefs;
+    let s = w.form_selected;
+    let rows = vec![
+        form_row(
+            "TorBox key",
+            &p.torbox_api_key,
+            "Your API key from torbox.app — kept masked, never shown",
+            s == 0,
+            true,
+        ),
+        form_row(
+            "Install dir",
+            &p.install_dir,
+            "Where Porthole keeps configs and containers",
+            s == 1,
+            false,
+        ),
+        ListItem::new(Text::from(vec![
+            Line::from(vec![
+                Span::styled(
+                    if s == 2 { "▸ " } else { "  " },
+                    Style::default().fg(ACCENT),
+                ),
+                Span::styled(
+                    format!("{:<14}", "Watch with"),
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("< {} >", p.media_server.label()),
+                    Style::default().fg(ACCENT),
+                ),
+            ]),
+            Line::from(vec![
+                Span::raw("    "),
+                Span::styled(
+                    "Space / ← → to switch. Your cinema app.",
+                    Style::default().fg(DIM),
+                ),
+            ]),
+        ])),
+        form_row(
+            "PUID",
+            &p.puid,
+            "Your user id — so files belong to you, not root (usually 1000)",
+            s == 3,
+            false,
+        ),
+        form_row(
+            "PGID",
+            &p.pgid,
+            "Your group id — same idea (usually 1000)",
+            s == 4,
+            false,
+        ),
+        form_row(
+            "Timezone",
+            &p.tz,
+            "e.g. America/Los_Angeles — keeps download times sane",
+            s == 5,
+            false,
+        ),
+        ListItem::new(Line::from(vec![
+            Span::styled(
+                if s == 6 { "▸ " } else { "  " },
+                Style::default().fg(ACCENT),
+            ),
+            Span::styled(
+                "[ Review the plan → ]",
+                Style::default()
+                    .fg(if s == 6 { Color::Black } else { GOOD })
+                    .bg(if s == 6 { GOOD } else { Color::Reset })
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ])),
+    ];
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(0), Constraint::Length(6)])
+        .split(area);
+
+    let list = List::new(rows).block(title_block(
+        "Three questions — Porthole does the hundred tiny configurations",
+    ));
+    f.render_widget(list, chunks[0]);
+
+    let mut err_lines: Vec<Line> = vec![Line::from(vec![Span::styled(
+        "Type to fill in, ↑↓ to move, Enter on the last row to continue.",
+        Style::default().fg(DIM),
+    )])];
+    for e in &w.form_errors {
+        err_lines.push(Line::from(vec![Span::styled(
+            format!("✖ {e}"),
+            Style::default().fg(BAD),
+        )]));
+    }
+    let help = Paragraph::new(Text::from(err_lines)).block(title_block(" "));
+    f.render_widget(help, chunks[1]);
+}
+
+fn render_plan(f: &mut Frame, app: &App, area: Rect) {
+    let w = &app.wizard;
+    let mut lines: Vec<Line> = vec![
+        Line::from(vec![Span::styled(
+            "Here's exactly what Porthole is about to do. Nothing runs until you say go.",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::ITALIC),
+        )]),
+        Line::from(""),
+        Line::from(vec![Span::styled(
+            "Command",
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        )]),
+        Line::from(vec![Span::styled(
+            "  bash setup.sh --yes   (in ~/.local/share/porthole/torbox-media-server)",
+            Style::default().fg(Color::White),
+        )]),
+        Line::from(""),
+        Line::from(vec![Span::styled(
+            "Settings it will use",
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+        )]),
+    ];
+    for (k, v) in w.prefs.masked_env() {
+        lines.push(Line::from(vec![
+            Span::styled(format!("  {k:<20}"), Style::default().fg(DIM)),
+            Span::styled(v, Style::default().fg(Color::White)),
+        ]));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![Span::styled(
+        "Then it wires everything together:",
+        Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+    )]));
+    lines.push(Line::from(vec![Span::styled(
+        "  Decypharr→Sonarr/Radarr · Prowlarr→Sonarr/Radarr · Seerr→everything",
+        Style::default().fg(Color::White),
+    )]));
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled(
+            "[Enter]",
+            Style::default().fg(GOOD).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" run it      ", Style::default().fg(DIM)),
+        Span::styled(
+            "[Esc]",
+            Style::default().fg(WARM).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" back to questions", Style::default().fg(DIM)),
+    ]));
+
+    let para = Paragraph::new(Text::from(lines))
+        .block(title_block("Dry run — the full plan, up front"))
+        .wrap(Wrap { trim: false });
+    f.render_widget(para, area);
+}
+
+fn spinner(tick: u64) -> &'static str {
+    const FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+    FRAMES[(tick as usize / 4) % FRAMES.len()]
+}
+
+fn render_progress(f: &mut Frame, app: &App, area: Rect) {
+    let w = &app.wizard;
     let cols = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
@@ -161,10 +402,16 @@ fn render_wizard(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
     // Left: steps.
     let mut items: Vec<ListItem> = Vec::new();
     for (i, step) in STEPS.iter().enumerate() {
-        let (glyph, color) = match app.wizard.status[i] {
+        let (glyph, color) = match w.step_status[i] {
             StepStatus::Done => ("✓", GOOD),
             StepStatus::Active => ("▶", ACCENT),
+            StepStatus::Failed => ("✖", BAD),
             StepStatus::Pending => ("○", DIM),
+        };
+        let glyph = if w.step_status[i] == StepStatus::Active {
+            spinner(w.tick).to_string()
+        } else {
+            glyph.to_string()
         };
         items.push(ListItem::new(Text::from(vec![
             Line::from(vec![
@@ -189,33 +436,38 @@ fn render_wizard(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
             ]),
         ])));
     }
-    let steps = List::new(items).block(title_block(
-        "Guided setup — plain language, no expertise needed",
-    ));
+    if let WizardPhase::Done(ok) = w.phase {
+        items.push(ListItem::new(Line::from(vec![Span::styled(
+            if ok {
+                "✓ Finished — press Enter to start over, Tab for the Fleet view."
+            } else {
+                "✖ Stopped early — read the log, fix the issue, press Enter to retry."
+            },
+            Style::default().fg(if ok { GOOD } else { BAD }),
+        )])));
+    } else if w.phase == WizardPhase::Running {
+        items.push(ListItem::new(Line::from(vec![Span::styled(
+            "Quitting (q) won't stop the installer — it keeps running on its own.",
+            Style::default().fg(DIM),
+        )])));
+    }
+    let steps = List::new(items).block(title_block("Guided setup — live"));
     f.render_widget(steps, cols[0]);
 
-    // Right: progress + log.
-    let right = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(0)])
-        .split(cols[1]);
-
-    let gauge = Gauge::default()
-        .block(title_block("Progress"))
-        .gauge_style(Style::default().fg(ACCENT))
-        .percent(app.wizard.progress);
-    f.render_widget(gauge, right[0]);
-
-    let log_lines: Vec<Line> = app
-        .wizard
+    // Right: log.
+    let log_lines: Vec<Line> = w
         .logs
         .iter()
         .rev()
-        .take(40)
+        .take(60)
         .rev()
         .map(|l| {
-            let style = if l.contains("[ok]") {
+            let style = if l.contains("[ok]") || l.starts_with('✓') {
                 Style::default().fg(GOOD)
+            } else if l.contains("[fail]") || l.contains("[error]") || l.starts_with('✖') {
+                Style::default().fg(BAD)
+            } else if l.contains("[warn]") {
+                Style::default().fg(WARM)
             } else if l.starts_with("──") {
                 Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
             } else {
@@ -227,10 +479,10 @@ fn render_wizard(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
     let log = Paragraph::new(Text::from(log_lines))
         .block(title_block("What Porthole is doing"))
         .wrap(Wrap { trim: false });
-    f.render_widget(log, right[1]);
+    f.render_widget(log, cols[1]);
 }
 
-fn render_integrations(f: &mut Frame, area: ratatui::layout::Rect) {
+fn render_integrations(f: &mut Frame, area: Rect) {
     let mut lines: Vec<Line> = vec![Line::from(vec![Span::styled(
         "Porthole doesn't just install apps — it introduces them to each other.",
         Style::default()
@@ -257,7 +509,7 @@ fn render_integrations(f: &mut Frame, area: ratatui::layout::Rect) {
     f.render_widget(para, area);
 }
 
-fn render_logs(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
+fn render_logs(f: &mut Frame, app: &App, area: Rect) {
     let lines: Vec<Line> = app
         .wizard
         .logs
@@ -270,7 +522,7 @@ fn render_logs(f: &mut Frame, app: &App, area: ratatui::layout::Rect) {
     f.render_widget(para, area);
 }
 
-fn render_help(f: &mut Frame, area: ratatui::layout::Rect) {
+fn render_help(f: &mut Frame, area: Rect) {
     let text = Text::from(vec![
         Line::from(""),
         Line::from(vec![Span::styled(
@@ -301,8 +553,11 @@ fn render_help(f: &mut Frame, area: ratatui::layout::Rect) {
         )]),
         Line::from(""),
         Line::from("  1–4 / Tab      switch views"),
-        Line::from("  ↑ ↓            move in the fleet list"),
-        Line::from("  Enter          start the guided setup (on the Setup view)"),
+        Line::from("  ↑ ↓            move in lists and forms"),
+        Line::from("  type           fill in the setup form"),
+        Line::from("  Space / ← →    switch Plex ↔ Jellyfin"),
+        Line::from("  Enter          confirm / start"),
+        Line::from("  r              refresh fleet status (Fleet view)"),
         Line::from("  ?              this help"),
         Line::from("  q              quit"),
         Line::from(""),

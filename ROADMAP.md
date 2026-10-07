@@ -14,21 +14,26 @@ before?*
 - [x] Demo-mode runner so the flow can be reviewed end to end
 - [x] CI: fmt, clippy, build, test
 
-## Phase 1 — Real provisioning (next)
+## Phase 1 — Real provisioning ✅ (current)
 
 Orchestrate, don't rewrite. The TorBox-Media-Server scripts are battle-tested
-(55 stars, real users); Phase 1 shells out to them with structured progress.
+(55 stars, real users); Porthole shells out to them with structured progress.
 
-- [ ] Detect real state: `docker compose ps` → Fleet view shows
-      running/stopped/failed per service (replaces "○ not set up")
-- [ ] Step runner executes real phases: dependency checks, port checks,
-      config generation, `docker compose up`, then the integration phase
-      (arr API wiring, indexer sharing, auth sync, library creation)
-- [ ] Stream real logs into the Logs view with per-step success/failure
-- [ ] Guided preferences: TorBox API key (masked input), install dir,
-      Plex vs Jellyfin, PUID/PGID — validated before anything runs
-- [ ] Dry-run mode: show the full plan (every file, every API call) before
-      executing — trust through transparency
+- [x] Detect real state: `docker ps -a` → Fleet view shows
+      running/stopped/failed/not-installed per service (`r` to refresh)
+- [x] Real preflight checks: tool presence (`docker`, `git`, `curl`,
+      compose plugin) and real port-conflict checks via bind tests
+- [x] Guided preferences: TorBox API key (masked input + log redaction),
+      install dir, Plex vs Jellyfin, PUID/PGID, timezone — validated
+      before anything runs
+- [x] Dry-run plan screen: exact command + env (key masked) shown before
+      executing; nothing runs until the user confirms
+- [x] Step runner executes the real `setup.sh --yes` with the collected env,
+      streaming stdout/stderr live into the Logs view with per-step
+      success/failure
+- [x] Post-install verify step re-checks every container and prints URLs
+- [x] Installer auto-fetched: shallow-clones TorBox-Media-Server into
+      `~/.local/share/porthole` on first run, pulls updates when present
 
 ## Phase 2 — Native provisioning
 

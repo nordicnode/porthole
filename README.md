@@ -35,8 +35,8 @@ you can see (and trust) what was connected.
 
 | View | What it does |
 |------|--------------|
-| **Fleet** (`1`) | Every service at a glance, described in plain language — no jargon |
-| **Setup** (`2`) | Guided 8-step wizard: checks, preferences, launch, and all the introductions |
+| **Fleet** (`1`) | Every service at a glance with **live Docker status**, described in plain language — no jargon |
+| **Setup** (`2`) | Guided wizard: 3 questions → dry-run plan → real provisioning with live logs |
 | **Wiring** (`3`) | The integration map — every connection Porthole makes, in plain words |
 | **Logs** (`4`) | Everything Porthole is doing, streamed live |
 | **Help** (`?`) | The one-paragraph version of all of this |
@@ -53,9 +53,11 @@ Works over SSH — it's a TUI, so it runs wherever your server lives.
 
 ## Project status
 
-**Phase 0 — foundation** (this repo right now): the TUI shell, fleet
-definitions, the wiring map, and the guided-setup flow running in demo mode.
-See [ROADMAP.md](ROADMAP.md) for what's next.
+**Phase 1 — real provisioning** (current): the wizard collects preferences
+(TorBox key, install dir, Plex/Jellyfin, PUID/PGID, timezone) with validation,
+shows a dry-run plan, then drives the real `setup.sh --yes` installer with
+live streamed logs and per-step status. The Fleet view reads live
+`docker ps` state. See [ROADMAP.md](ROADMAP.md) for what's next.
 
 ## License
 
