@@ -323,6 +323,64 @@ language on screen:
       racing; **seedboxes** documented as the heavy-seeding alternative
       (largely redundant if you already pay for debrid).
 
+## Phase 9 — Small-disk mode: the library lives in the cloud
+
+The imperative phase. Most users won't have hundreds of GB locally —
+so the default architecture must be: **play locally, store remotely**,
+with a small local disk. Researched October 2026.
+
+**The streaming stack** (defaults Porthole applies, no flags to learn):
+
+- [ ] **Decypharr DFS mount as the default stream path** — the docs'
+      recommended mount: lighter than rclone, ~500MB disk cache, 8MB
+      chunks. (rclone VFS `full` mode remains the own-cloud alternative;
+      WebDAV is never the default — it has no local cache.)
+- [ ] **Symlink imports**: with Decypharr as the download client, *arr
+      "imports" become symlinks — instant, zero disk. No copies, no
+      waiting, no 229 GB duplicate disasters.
+- [ ] **Cache auto-sizing**: Porthole measures free disk at install and
+      sizes the VFS cache itself (warm 10–30 GB per 4K stream is enough;
+      keeps 10 GB headroom; `--vfs-cache-mode full` always — without it,
+      remux seek/resume demonstrably breaks). Buffer kept small
+      (per-open-file RAM — a 2026 incident OOMed a box at 256 MB).
+- [ ] **.strm files as the mountless alternative**: playable with no
+      mount at all — worth offering for the most disk-poor setups.
+
+**Media-server settings, applied automatically** (the expert traps):
+
+- [ ] Plex: preview thumbnails=Never, chapter/intro markers as scheduled
+      task (not on-scan), loudness analysis=Never, extensive media
+      analysis=off, periodic scans=off — and critically,
+      **empty-trash-automatically=OFF** (a scan during a mount outage
+      with it on deletes library entries).
+- [ ] Jellyfin: real-time monitoring doesn't fire on FUSE — Porthole
+      configures scheduled scans instead.
+- [ ] **Transcode temp stays local**: Porthole reserves ~25 GB free
+      (50 GB+ if 4K transcodes are frequent) and warns honestly at
+      install if the disk can't hold it.
+
+**Resilience** (mounts will drop; the fleet must not panic):
+
+- [ ] Health-gated mount lifecycle: `mountpoint -q` before consumers
+      start; lazy unmount + remount on failure; systemd automount.
+- [ ] Doctor learns the dead-mount signature (`ENOTCONN transport
+      endpoint not connected`) and the recovery ritual: restore mount
+      → restart consumers → rescan → manual empty-trash — automated,
+      in plain language.
+- [ ] Honest bandwidth guidance in the wizard: 4K remux direct play
+      needs ~100–120 Mbps sustained per stream. If the connection
+      can't do it, Porthole says so before promising 4K.
+
+**For the truly disk-poor** (optional):
+
+- [ ] **Janitorr**: schedule-based "watched it, delete it" cleaning —
+      the cache's LRU eviction already keeps recently-watched warm;
+      Janitorr makes deletion a policy instead of an accident.
+
+Note on ordering: this phase is listed ninth but is architecturally
+foundational — small-disk mode should be the *default* Porthole
+assumes, with big-local-disk as the advanced path, not the reverse.
+
 ## Explicitly deferred — researched, not planned
 
 - [ ] **Readarr** (books) — officially retired and archived 2025-06-27
