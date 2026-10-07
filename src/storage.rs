@@ -100,6 +100,55 @@ impl DiskVerdict {
     }
 }
 
+/// Honest verdict on a measured download speed, in plain language.
+/// Thresholds from 2026 streaming research: 1080p gets risky under 15,
+/// compressed 4K wants ~25, 4K remux needs 60–80+ sustained.
+pub fn bandwidth_verdict(mbps: f64) -> &'static str {
+    if mbps < 15.0 {
+        "Even 1080p will be risky at this speed — expect buffering. Consider 720p."
+    } else if mbps < 25.0 {
+        "Fine for 1080p. 4K will buffer — stick to 1080p quality profiles."
+    } else if mbps < 60.0 {
+        "Good for 1080p and compressed 4K. Full 4K remuxes may still buffer at peak scenes."
+    } else {
+        "4K remux territory. Your connection can handle the heaviest files."
+    }
+}
+
+/// Measure real download speed in Mbps by fetching 25 MB from Cloudflare's
+/// speed-test endpoint. Returns an honest error instead of a guess when
+/// curl is missing or the test fails.
+pub fn measure_bandwidth_mbps(tx: &std::sync::mpsc::Sender<String>) -> Result<f64, String> {
+    if !crate::docker::command_exists("curl") {
+        return Err("curl is missing — can't measure speed".to_string());
+    }
+    let _ = tx.send("[in] downloading 25 MB to measure your speed…".to_string());
+    let out = Command::new("curl")
+        .args([
+            "-o",
+            "/dev/null",
+            "-s",
+            "-w",
+            "%{speed_download}",
+            "--max-time",
+            "60",
+            "https://speed.cloudflare.com/__down?bytes=25000000",
+        ])
+        .output()
+        .map_err(|e| format!("could not run curl: {e}"))?;
+    if !out.status.success() {
+        return Err("the speed test failed — check your connection and try again".to_string());
+    }
+    let bytes_per_sec: f64 = String::from_utf8_lossy(&out.stdout)
+        .trim()
+        .parse()
+        .map_err(|_| "could not parse speed test result".to_string())?;
+    if bytes_per_sec <= 0.0 {
+        return Err("speed test returned no data".to_string());
+    }
+    Ok(bytes_per_sec * 8.0 / 1_000_000.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -149,5 +198,13 @@ mod tests {
             DiskVerdict::from_free_bytes(5 * GB),
             DiskVerdict::Critical(5 * GB)
         );
+    }
+
+    #[test]
+    fn bandwidth_verdict_thresholds() {
+        assert!(bandwidth_verdict(10.0).contains("1080p will be risky"));
+        assert!(bandwidth_verdict(20.0).contains("Fine for 1080p"));
+        assert!(bandwidth_verdict(40.0).contains("compressed 4K"));
+        assert!(bandwidth_verdict(100.0).contains("4K remux territory"));
     }
 }

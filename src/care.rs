@@ -500,14 +500,32 @@ pub enum CareEvent {
     UpdateAvailable(crate::selfupdate::ReleaseInfo),
 }
 
-/// Enable small-disk mode: configure Decypharr's DFS mount so the debrid
-/// cloud appears as a local filesystem, and make *arr "imports" instant
-/// symlinks that cost zero local bytes.
+/// How new downloads reach the library in small-disk mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DownloadAction {
+    /// DFS mount + symlinks: instant, zero bytes, needs the mount running.
+    Symlink,
+    /// .strm files pointing at Decypharr's WebDAV: no mount needed at all.
+    /// Jellyfin/Kodi play them natively; Plex needs the plex-strm-assistant
+    /// helper (it never learned .strm).
+    Strm,
+}
+
+/// Enable small-disk mode: the debrid cloud becomes the library, the local
+/// disk only holds a stream cache.
 ///
-/// This edits the existing `configs/decypharr/config.json` in place
+/// - `Symlink`: configures Decypharr's DFS mount (auto-sized cache) and
+///   makes *arr "imports" instant symlinks costing zero local bytes.
+/// - `Strm`: no mount at all — new downloads become .strm files pointing
+///   at Decypharr's WebDAV. For the most disk-poor setups.
+///
+/// Edits the existing `configs/decypharr/config.json` in place
 /// (JSON-merged, preserving every other setting) after taking a backup.
-/// The disk cache is auto-sized from actual free disk.
-pub fn apply_small_disk_mode(install_dir: &Path, tx: &Sender<CareEvent>) -> Result<()> {
+pub fn apply_small_disk_mode(
+    install_dir: &Path,
+    action: DownloadAction,
+    tx: &Sender<CareEvent>,
+) -> Result<()> {
     let log = |s: &str| {
         let _ = tx.send(CareEvent::Log(s.to_string()));
     };
@@ -518,20 +536,6 @@ pub fn apply_small_disk_mode(install_dir: &Path, tx: &Sender<CareEvent>) -> Resu
             config_path.display()
         );
     }
-
-    let free = crate::storage::free_bytes(install_dir)
-        .map_err(|e| anyhow::anyhow!("could not measure free disk space: {e}"))?;
-    let cache_bytes = crate::storage::suggested_cache_bytes(free);
-    let cache_str = crate::storage::gb_string(cache_bytes);
-    log(&format!(
-        "[in] {} GB free on this disk; sizing the stream cache at {}…",
-        free / crate::storage::GB,
-        cache_str
-    ));
-
-    let map = crate::generate::read_env_file(&install_dir.join(".env"));
-    let puid: u32 = map.get("PUID").and_then(|s| s.parse().ok()).unwrap_or(1000);
-    let pgid: u32 = map.get("PGID").and_then(|s| s.parse().ok()).unwrap_or(1000);
 
     log("[in] backing up before changing the Decypharr config…");
     let backup = create_backup(install_dir)?;
@@ -545,28 +549,142 @@ pub fn apply_small_disk_mode(install_dir: &Path, tx: &Sender<CareEvent>) -> Resu
     let mut cfg: serde_json::Value =
         serde_json::from_str(&raw).context("Decypharr config.json is not valid JSON")?;
 
-    let mount = crate::generate::DecypharrMount::new(
-        "/mnt/decypharr",
-        "/cache/dfs",
-        &cache_str,
-        puid,
-        pgid,
-    );
-    cfg["mount"] = mount.to_json();
-    cfg["default_download_action"] = serde_json::json!("symlink");
+    match action {
+        DownloadAction::Symlink => {
+            let free = crate::storage::free_bytes(install_dir)
+                .map_err(|e| anyhow::anyhow!("could not measure free disk space: {e}"))?;
+            let cache_bytes = crate::storage::suggested_cache_bytes(free);
+            let cache_str = crate::storage::gb_string(cache_bytes);
+            log(&format!(
+                "[in] {} GB free on this disk; sizing the stream cache at {}…",
+                free / crate::storage::GB,
+                cache_str
+            ));
 
-    let out = serde_json::to_string_pretty(&cfg).context("serializing config")?;
-    std::fs::write(&config_path, out + "\n")
-        .with_context(|| format!("writing {}", config_path.display()))?;
+            let map = crate::generate::read_env_file(&install_dir.join(".env"));
+            let puid: u32 = map.get("PUID").and_then(|s| s.parse().ok()).unwrap_or(1000);
+            let pgid: u32 = map.get("PGID").and_then(|s| s.parse().ok()).unwrap_or(1000);
 
-    log("[ok] small-disk mode enabled:");
-    log("  • Decypharr now mounts the debrid cloud as a filesystem (DFS)");
-    log(&format!(
-        "  • stream cache sized at {cache_str} for this disk"
-    ));
-    log("  • new downloads are imported as symlinks — zero local bytes");
-    log("[in] restart Decypharr for the mount to take effect");
+            let mount = crate::generate::DecypharrMount::new(
+                "/mnt/decypharr",
+                "/cache/dfs",
+                &cache_str,
+                puid,
+                pgid,
+            );
+            cfg["mount"] = mount.to_json();
+            cfg["default_download_action"] = serde_json::json!("symlink");
+
+            let out = serde_json::to_string_pretty(&cfg).context("serializing config")?;
+            std::fs::write(&config_path, out + "\n")
+                .with_context(|| format!("writing {}", config_path.display()))?;
+
+            log("[ok] small-disk mode enabled:");
+            log("  • Decypharr now mounts the debrid cloud as a filesystem (DFS)");
+            log(&format!(
+                "  • stream cache sized at {cache_str} for this disk"
+            ));
+            log("  • new downloads are imported as symlinks — zero local bytes");
+            log("[in] restart Decypharr for the mount to take effect");
+        }
+        DownloadAction::Strm => {
+            // No mount needed — .strm files point at WebDAV. Remove any
+            // mount block so a dead mount can't confuse things.
+            if let Some(obj) = cfg.as_object_mut() {
+                obj.remove("mount");
+            }
+            cfg["default_download_action"] = serde_json::json!("strm");
+
+            let out = serde_json::to_string_pretty(&cfg).context("serializing config")?;
+            std::fs::write(&config_path, out + "\n")
+                .with_context(|| format!("writing {}", config_path.display()))?;
+
+            log("[ok] .strm mode enabled:");
+            log("  • no mount needed — new downloads become .strm files");
+            log("  • Jellyfin plays .strm natively; Plex needs the");
+            log("    plex-strm-assistant helper (Plex never learned .strm)");
+            log("[in] restart Decypharr for the change to take effect");
+        }
+    }
     Ok(())
+}
+
+/// Is small-disk mode active? True when the Decypharr config has a `mount`
+/// block (DFS) or a non-default download action.
+pub fn small_disk_active(install_dir: &Path) -> bool {
+    let path = install_dir.join("configs/decypharr/config.json");
+    let raw = match std::fs::read_to_string(&path) {
+        Ok(r) => r,
+        Err(_) => return false,
+    };
+    let cfg: serde_json::Value = match serde_json::from_str(&raw) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    cfg.get("mount").is_some()
+        || cfg
+            .get("default_download_action")
+            .and_then(|v| v.as_str())
+            .is_some_and(|a| a != "download")
+}
+
+/// Check the DFS cloud mount from inside the Decypharr container.
+/// Returns Ok(true) when mounted, Ok(false) when the mount is dead or
+/// missing, Err when we couldn't even ask.
+pub fn cloud_mount_healthy() -> Result<bool, String> {
+    // mountpoint -q exits 0 iff the path is a mountpoint.
+    match crate::docker::exec("decypharr", &["mountpoint", "-q", "/mnt/decypharr"]) {
+        Ok(_) => Ok(true),
+        Err(e) => {
+            // docker exec failed — distinguish "container not running"
+            // from "mountpoint says no".
+            if e.contains("No such container") || e.contains("not running") {
+                Err("the Decypharr container isn't running".to_string())
+            } else {
+                Ok(false)
+            }
+        }
+    }
+}
+
+/// Apply the media-server settings for a cloud-backed library:
+/// Plex gets its 7 verified prefs via API; Jellyfin gets exact manual
+/// steps (no API key exists to automate it).
+pub fn apply_media_server_settings(install_dir: &Path, tx: &Sender<CareEvent>) -> Result<()> {
+    let log = |s: &str| {
+        let _ = tx.send(CareEvent::Log(s.to_string()));
+    };
+    let server = crate::media_server::detect(install_dir)
+        .ok_or_else(|| anyhow::anyhow!("couldn't tell whether this fleet uses Plex or Jellyfin"))?;
+    match server {
+        crate::media_server::MediaServer::Plex => {
+            let token =
+                crate::media_server::plex_token(install_dir).map_err(|e| anyhow::anyhow!("{e}"))?;
+            log("[in] talking to Plex…");
+            let log_fn = |s: String| {
+                let _ = tx.send(CareEvent::Log(s));
+            };
+            let applied = crate::media_server::apply_plex_cloud_settings(&token, &log_fn)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            log(&format!(
+                "[ok] Plex tuned for cloud storage ({} settings):",
+                applied.len()
+            ));
+            log("  • empty-trash-automatically OFF — a scan during an outage");
+            log("    can never delete your library entries");
+            log("  • preview thumbnails, chapter images, intro markers,");
+            log("    loudness analysis: all off (hours of CPU saved)");
+            log("  • periodic full scans off — the *arrs notify Plex directly");
+            Ok(())
+        }
+        crate::media_server::MediaServer::Jellyfin => {
+            log("[in] Jellyfin detected.");
+            for line in crate::media_server::jellyfin_manual_steps() {
+                log(&format!("[ok] {line}"));
+            }
+            Ok(())
+        }
+    }
 }
 
 #[cfg(test)]
@@ -633,7 +751,7 @@ mod tests {
 
         let (tx, _rx) = mpsc::channel();
         let before: std::collections::HashSet<_> = list_backups().into_iter().collect();
-        apply_small_disk_mode(&base, &tx).unwrap();
+        apply_small_disk_mode(&base, DownloadAction::Symlink, &tx).unwrap();
 
         let v: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(cfg_dir.join("config.json")).unwrap())
@@ -662,7 +780,61 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
         std::fs::create_dir_all(&base).unwrap();
         let (tx, _rx) = mpsc::channel();
-        assert!(apply_small_disk_mode(&base, &tx).is_err());
+        assert!(apply_small_disk_mode(&base, DownloadAction::Symlink, &tx).is_err());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn strm_mode_sets_strm_and_drops_mount() {
+        let _guard = BACKUP_LOCK.lock().unwrap();
+        let base = std::env::temp_dir().join("porthole-sd-strm-test");
+        let _ = std::fs::remove_dir_all(&base);
+        let cfg_dir = base.join("configs/decypharr");
+        std::fs::create_dir_all(&cfg_dir).unwrap();
+        std::fs::write(
+            cfg_dir.join("config.json"),
+            r#"{"username":"u","mount":{"type":"dfs"},"default_download_action":"symlink"}"#,
+        )
+        .unwrap();
+
+        let (tx, _rx) = mpsc::channel();
+        let before: std::collections::HashSet<_> = list_backups().into_iter().collect();
+        apply_small_disk_mode(&base, DownloadAction::Strm, &tx).unwrap();
+
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(cfg_dir.join("config.json")).unwrap())
+                .unwrap();
+        assert_eq!(v["default_download_action"], "strm");
+        assert!(v.get("mount").is_none());
+        assert_eq!(v["username"], "u");
+        for p in list_backups() {
+            if !before.contains(&p) {
+                std::fs::remove_file(p).ok();
+            }
+        }
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn small_disk_active_detects_modes() {
+        let base = std::env::temp_dir().join("porthole-sd-active-test");
+        let _ = std::fs::remove_dir_all(&base);
+        let cfg_dir = base.join("configs/decypharr");
+        std::fs::create_dir_all(&cfg_dir).unwrap();
+        let cfg = cfg_dir.join("config.json");
+
+        std::fs::write(&cfg, r#"{"port":"8282"}"#).unwrap();
+        assert!(!small_disk_active(&base));
+
+        std::fs::write(&cfg, r#"{"mount":{"type":"dfs"}}"#).unwrap();
+        assert!(small_disk_active(&base));
+
+        std::fs::write(&cfg, r#"{"default_download_action":"strm"}"#).unwrap();
+        assert!(small_disk_active(&base));
+
+        std::fs::write(&cfg, r#"{"default_download_action":"download"}"#).unwrap();
+        assert!(!small_disk_active(&base));
+
         let _ = std::fs::remove_dir_all(&base);
     }
 }

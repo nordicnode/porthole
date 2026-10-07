@@ -127,6 +127,21 @@ pub fn restart_container(name: &str) -> bool {
     docker_cmd(&["restart", name])
 }
 
+/// Run a command inside a running container. Returns stdout on success.
+pub fn exec(container: &str, args: &[&str]) -> Result<String, String> {
+    let mut cmd_args = vec!["exec", container];
+    cmd_args.extend(args);
+    let out = Command::new("docker")
+        .args(&cmd_args)
+        .output()
+        .map_err(|e| format!("could not run docker exec: {e}"))?;
+    if out.status.success() {
+        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
+}
+
 /// Porthole's own data dir: installer checkouts, etc.
 pub fn data_dir() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());

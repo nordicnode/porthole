@@ -9,6 +9,7 @@ mod care;
 mod config;
 mod docker;
 mod generate;
+mod media_server;
 mod provision;
 mod selfupdate;
 mod services;

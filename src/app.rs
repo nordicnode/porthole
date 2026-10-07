@@ -260,6 +260,7 @@ pub enum CheckStatus {
 #[derive(Clone)]
 pub enum Fix {
     StartContainer(String),
+    RestartContainer(String),
 }
 
 /// One health check, explained in plain language.
@@ -403,6 +404,37 @@ impl DoctorState {
             }),
         }
 
+        // Cloud mount: only relevant in small-disk mode.
+        if let Some(dir) = &config.install_dir {
+            if crate::care::small_disk_active(std::path::Path::new(dir)) {
+                match crate::care::cloud_mount_healthy() {
+                    Ok(true) => checks.push(Check {
+                        name: "Cloud drive".to_string(),
+                        message: "The debrid cloud is mounted and reachable — playback will work."
+                            .to_string(),
+                        status: CheckStatus::Pass,
+                        fix: None,
+                        fix_label: String::new(),
+                    }),
+                    Ok(false) => checks.push(Check {
+                        name: "Cloud drive".to_string(),
+                        message: "The cloud drive mount has dropped (the classic 'transport endpoint is not connected'). Nothing can play until it's back. Restarting Decypharr usually revives it."
+                            .to_string(),
+                        status: CheckStatus::Fail,
+                        fix: Some(Fix::RestartContainer("decypharr".to_string())),
+                        fix_label: "Restart Decypharr".to_string(),
+                    }),
+                    Err(e) => checks.push(Check {
+                        name: "Cloud drive".to_string(),
+                        message: format!("Couldn't check the cloud mount: {e}."),
+                        status: CheckStatus::Warn,
+                        fix: None,
+                        fix_label: String::new(),
+                    }),
+                }
+            }
+        }
+
         // Every service: exists? running? actually answering?
         let statuses = docker::service_statuses();
         for svc in SERVICES {
@@ -493,6 +525,16 @@ impl DoctorState {
                     ))
                 }
             }
+            Fix::RestartContainer(name) => {
+                if docker::restart_container(&name) {
+                    Some(format!("{} restarted.", check.name))
+                } else {
+                    Some(format!(
+                        "Couldn't restart {} — see the Logs view.",
+                        check.name
+                    ))
+                }
+            }
         }
     }
 
@@ -530,6 +572,9 @@ pub enum CareOp {
     Restore(PathBuf),
     RegenConfigs,
     SmallDisk,
+    SmallDiskStrm,
+    MediaServerTune,
+    SpeedTest,
     CheckUpdates,
     CheckPortholeUpdate,
     InstallPortholeUpdate(crate::selfupdate::ReleaseInfo),
@@ -544,6 +589,9 @@ impl CareOp {
             CareOp::Restore(_) => "Restore a backup",
             CareOp::RegenConfigs => "Regenerate configs",
             CareOp::SmallDisk => "Optimize for small disk",
+            CareOp::SmallDiskStrm => "Use .strm files (no mount)",
+            CareOp::MediaServerTune => "Tune media server for cloud",
+            CareOp::SpeedTest => "Test my connection speed",
             CareOp::CheckUpdates => "Check for updates",
             CareOp::CheckPortholeUpdate => "Check for Porthole updates",
             CareOp::InstallPortholeUpdate(_) => "Install Porthole update",
@@ -561,6 +609,15 @@ impl CareOp {
             }
             CareOp::SmallDisk => {
                 "Mount the debrid cloud as a filesystem and make imports instant symlinks. Your library lives remotely; this disk only holds a small stream cache."
+            }
+            CareOp::SmallDiskStrm => {
+                "Skip the mount entirely — new downloads become tiny .strm files. For the most disk-poor setups."
+            }
+            CareOp::MediaServerTune => {
+                "Turn off the disk-churning Plex settings (thumbnails, deep analysis, auto empty-trash). Jellyfin needs no changes."
+            }
+            CareOp::SpeedTest => {
+                "Download 25 MB and tell you honestly what quality your connection can stream."
             }
             CareOp::CheckUpdates => {
                 "See if any service has a new version. Downloads, but changes nothing."
@@ -613,6 +670,27 @@ impl CareOp {
                 "  • make new downloads import as symlinks — zero local bytes".to_string(),
                 "Restart Decypharr afterwards for the mount to take effect.".to_string(),
             ],
+            CareOp::SmallDiskStrm => vec![
+                "Porthole will:".to_string(),
+                "  • take a backup first".to_string(),
+                "  • switch new downloads to .strm files (no mount needed)".to_string(),
+                "  • remove the DFS mount config if one exists".to_string(),
+                "Jellyfin plays .strm natively; Plex needs the plex-strm-assistant helper."
+                    .to_string(),
+            ],
+            CareOp::MediaServerTune => vec![
+                "Porthole will:".to_string(),
+                "  • detect whether you run Plex or Jellyfin".to_string(),
+                "  • Plex: turn off empty-trash-automatically, preview thumbnails,".to_string(),
+                "    chapter images, intro markers, loudness analysis, periodic scans".to_string(),
+                "  • Jellyfin: nothing to change — its defaults already suit cloud storage"
+                    .to_string(),
+            ],
+            CareOp::SpeedTest => vec![
+                "Porthole will download about 25 MB from Cloudflare's speed-test".to_string(),
+                "endpoint and tell you what streaming quality your connection".to_string(),
+                "can honestly handle. Nothing else changes.".to_string(),
+            ],
             CareOp::CheckUpdates => vec![
                 "Porthole will download the latest images and tell you what's new.".to_string(),
                 "Nothing restarts. Nothing changes.".to_string(),
@@ -657,6 +735,9 @@ pub(crate) const CARE_ACTIONS: &[fn() -> CareOp] = &[
     || CareOp::Restore(PathBuf::new()), // placeholder → backup picker
     || CareOp::RegenConfigs,
     || CareOp::SmallDisk,
+    || CareOp::SmallDiskStrm,
+    || CareOp::MediaServerTune,
+    || CareOp::SpeedTest,
     || CareOp::CheckUpdates,
     || CareOp::CheckPortholeUpdate,
     || CareOp::UpdateFleet,
@@ -895,8 +976,37 @@ fn run_care_op(
         }
         CareOp::SmallDisk => {
             let d = dir()?;
-            crate::care::apply_small_disk_mode(std::path::Path::new(&d), &tx)?;
+            crate::care::apply_small_disk_mode(
+                std::path::Path::new(&d),
+                crate::care::DownloadAction::Symlink,
+                &tx,
+            )?;
             Ok("Small-disk mode enabled — the debrid cloud is now a filesystem.".to_string())
+        }
+        CareOp::SmallDiskStrm => {
+            let d = dir()?;
+            crate::care::apply_small_disk_mode(
+                std::path::Path::new(&d),
+                crate::care::DownloadAction::Strm,
+                &tx,
+            )?;
+            Ok(".strm mode enabled — no mount needed.".to_string())
+        }
+        CareOp::MediaServerTune => {
+            let d = dir()?;
+            crate::care::apply_media_server_settings(std::path::Path::new(&d), &tx)?;
+            Ok("Media server tuned for cloud storage.".to_string())
+        }
+        CareOp::SpeedTest => {
+            let (bw_tx, bw_rx) = std::sync::mpsc::channel::<String>();
+            let mbps = crate::storage::measure_bandwidth_mbps(&bw_tx)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            // Drain progress messages into the care log.
+            for msg in bw_rx.try_iter() {
+                let _ = tx.send(crate::care::CareEvent::Log(msg));
+            }
+            let verdict = crate::storage::bandwidth_verdict(mbps);
+            Ok(format!("Measured {mbps:.0} Mbps. {verdict}"))
         }
         CareOp::UpdateFleet => {
             let d = dir()?;

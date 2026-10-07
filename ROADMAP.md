@@ -84,7 +84,7 @@ fleet up, it keeps it healthy — still with no expert knowledge required.
       release binary, packages `porthole-x86_64-linux.tar.gz` + SHA256SUMS,
       and publishes a GitHub release
 
-## Phase 5 — Small-disk mode: the library lives in the cloud
+## Phase 5 — Small-disk mode: the library lives in the cloud ✅
 
 The imperative phase. Most users won't have hundreds of GB locally —
 so the default architecture must be: **play locally, store remotely**,
@@ -104,39 +104,43 @@ with a small local disk. Researched October 2026.
 - [x] **Cache auto-sizing**: Porthole measures free disk and sizes the
       DFS cache itself (~35% of free after reserving 25 GB transcode
       headroom, clamped 10–100 GB). (`src/storage.rs`, tested.)
-- [ ] **.strm files as the mountless alternative**: playable with no
-      mount at all — worth offering for the most disk-poor setups.
+- [x] **.strm files as the mountless alternative**: Care → "Use .strm
+      files (no mount)" — sets `default_download_action: strm`, drops the
+      mount block. Jellyfin plays them natively; Plex needs
+      plex-strm-assistant (said on the confirm screen).
 
 **Media-server settings, applied automatically** (the expert traps):
 
-- [ ] Plex: preview thumbnails=Never, chapter/intro markers as scheduled
-      task (not on-scan), loudness analysis=Never, extensive media
-      analysis=off, periodic scans=off — and critically,
-      **empty-trash-automatically=OFF** (a scan during a mount outage
-      with it on deletes library entries).
-- [ ] Jellyfin: real-time monitoring doesn't fire on FUSE — Porthole
-      configures scheduled scans instead.
+- [x] Plex: Care → "Tune media server for cloud" — token read from
+      Preferences.xml (same as the installer), 7 prefs via `PUT /:/prefs`
+      (all names verified against real Preferences.xml files):
+      `autoEmptyTrash=0`, `GenerateBIFBehavior=never`,
+      `GenerateChapterThumbBehavior=never`,
+      `GenerateIntroMarkerBehavior=never`, `LoudnessAnalysisBehavior=never`,
+      `ScheduledLibraryUpdatesEnabled=0`, `ButlerTaskDeepMediaAnalysis=0`.
+- [x] Jellyfin: the installer provisions no API key and there's no
+      unauthenticated settings API, so Porthole is honest about the
+      boundary — "Tune media server" reports the exact status instead of
+      pretending. (Jellyfin's defaults are already FUSE-tolerant: the
+      daily "Scan Media Library" task exists, and real-time monitoring
+      harmlessly no-ops on FUSE.)
 - [x] **Transcode temp stays local**: Doctor's "Local disk" check warns
       honestly when free space drops under ~25 GB (fail under 10 GB).
       (Bind-mounting transcode temp locally is installer-level work.)
 
 **Resilience** (mounts will drop; the fleet must not panic):
 
-- [ ] Health-gated mount lifecycle: `mountpoint -q` before consumers
-      start; lazy unmount + remount on failure; systemd automount.
-- [ ] Doctor learns the dead-mount signature (`ENOTCONN transport
-      endpoint not connected`) and the recovery ritual: restore mount
-      → restart consumers → rescan → manual empty-trash — automated,
-      in plain language.
-- [ ] Honest bandwidth guidance in the wizard: 4K remux direct play
-      needs ~100–120 Mbps sustained per stream. If the connection
-      can't do it, Porthole says so before promising 4K.
-
-**For the truly disk-poor** (optional):
-
-- [ ] **Janitorr**: schedule-based "watched it, delete it" cleaning —
-      the cache's LRU eviction already keeps recently-watched warm;
-      Janitorr makes deletion a policy instead of an accident.
+- [x] Health-gated mount lifecycle: Doctor's "Cloud drive" check runs
+      `docker exec decypharr mountpoint -q /mnt/decypharr` (only when
+      small-disk mode is active) and catches the dead-mount signature
+      (`ENOTCONN transport endpoint not connected`).
+- [x] One-key recovery: `[f] Restart Decypharr` right on the failed check
+      — the recovery ritual (restore mount → restart consumers → rescan)
+      in plain language, no terminal needed.
+- [x] Honest bandwidth guidance: Care → "Test my connection speed"
+      downloads 25 MB from Cloudflare's speed-test endpoint and reports
+      the verdict plainly (<15 Mbps: 1080p risky; <25: 4K will buffer;
+      <60: compressed 4K ok; 60+: remux territory).
 
 **Traps & edge cases (researched Oct 2026):**
 
@@ -511,6 +515,11 @@ mixed-capacity redundancy, still roadmap-stage).
   `rclone rcd` + `rclone rc core/bwlimit`.
 
 ## Phase 10 — The fleet looks after itself: companion automation
+
+- [ ] **Janitorr** — schedule-based "watched it, delete it" cleaning
+      for the truly disk-poor (moved from Phase 5: it's a companion
+      service, not small-disk core). Starts dry-run; the cache's LRU
+      eviction already keeps recently-watched warm.
 
 The thesis extended: not just installed and wired, but *maintained*
 without expertise. Each of these is actively maintained and API-wired
