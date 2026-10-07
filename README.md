@@ -43,7 +43,7 @@ and shows you the wiring map so you can see (and trust) what was connected.
 | **Doctor** (`4`) | Fleet health checks in plain language, with one-key fixes |
 | **Care** (`5`) | Backups, one-key updates with automatic rollback, config regeneration, clean uninstall, Porthole self-updates |
 | **Logs** (`6`) | Everything Porthole is doing, streamed live |
-| **Help** (`?`) | The one-paragraph version of all of this |
+| **Help** (`?`) | Keyboard shortcuts, plain-language privacy and storage explainers |
 
 ## Quick start
 
