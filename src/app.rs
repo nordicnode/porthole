@@ -64,7 +64,7 @@ pub enum WizardPhase {
 
 /// Form rows: 0 API key, 1 install dir, 2 media server, 3 PUID, 4 PGID,
 /// 5 timezone, 6 the "review plan" action row.
-pub const FORM_ROWS: usize = 11;
+pub const FORM_ROWS: usize = 14;
 
 pub struct WizardState {
     pub phase: WizardPhase,
@@ -222,6 +222,14 @@ impl WizardState {
                         if c == ' ' {
                             self.prefs.extras.sportarr = !self.prefs.extras.sportarr;
                         }
+                    } else if self.form_selected == 11 {
+                        if c == ' ' {
+                            self.prefs.fleet_profile = self.prefs.fleet_profile.cycle();
+                        }
+                    } else if self.form_selected == 12 {
+                        if c == ' ' {
+                            self.prefs.debrid_provider = self.prefs.debrid_provider.cycle();
+                        }
                     } else if let Some(f) = self.field_mut(self.form_selected) {
                         f.push(c);
                     }
@@ -237,6 +245,10 @@ impl WizardState {
                         self.prefs.extras.bazarr = !self.prefs.extras.bazarr;
                     } else if self.form_selected == 9 {
                         self.prefs.extras.sportarr = !self.prefs.extras.sportarr;
+                    } else if self.form_selected == 11 {
+                        self.prefs.fleet_profile = self.prefs.fleet_profile.cycle();
+                    } else if self.form_selected == 12 {
+                        self.prefs.debrid_provider = self.prefs.debrid_provider.cycle();
                     }
                 }
                 KeyCode::Enter => {
@@ -477,6 +489,13 @@ impl DoctorState {
             if problems.is_empty() {
                 // Verify the wiring via a lightweight probe.
                 // Full verification lives in Care; here we just detect drift.
+                // What counts as "wired" depends on the fleet profile.
+                let profile =
+                    std::fs::read_to_string(install.join(".porthole-profile")).unwrap_or_default();
+                let needs_local = profile
+                    .lines()
+                    .next()
+                    .is_some_and(|l| l == "local" || l == "hybrid");
                 let mut ids = vec!["sonarr", "radarr"];
                 for extra in ["lidarr", "sportarr"] {
                     if install.join(format!("configs/{extra}/config.xml")).exists() {
@@ -508,6 +527,9 @@ impl DoctorState {
                                 Ok(o) if o.status.success() => {
                                     let body = String::from_utf8_lossy(&o.stdout);
                                     body.contains("Decypharr")
+                                        || (needs_local
+                                            && (body.contains("qBittorrent")
+                                                || body.contains("SABnzbd")))
                                 }
                                 _ => true, // *arr down — don't cry wolf; service check covers it
                             }
@@ -691,6 +713,8 @@ pub enum CareOp {
     SpeedTest,
     QualityProfiles,
     Extras(crate::extras::Extras),
+    VpnSetup(String, String), // (provider, wireguard_key)
+    LocalClients,
     CheckUpdates,
     CheckPortholeUpdate,
     InstallPortholeUpdate(crate::selfupdate::ReleaseInfo),
@@ -710,6 +734,8 @@ impl CareOp {
             CareOp::SpeedTest => "Test my connection speed",
             CareOp::QualityProfiles => "Apply expert quality profiles",
             CareOp::Extras(_) => "Add or remove extra services",
+            CareOp::VpnSetup(_, _) => "Set up VPN for downloads",
+            CareOp::LocalClients => "Wire up download clients",
             CareOp::CheckUpdates => "Check for updates",
             CareOp::CheckPortholeUpdate => "Check for Porthole updates",
             CareOp::InstallPortholeUpdate(_) => "Install Porthole update",
@@ -741,7 +767,13 @@ impl CareOp {
                 "Sync the TRaSH Guides' quality profiles into Sonarr and Radarr. Reverts hand-edits by design."
             }
             CareOp::Extras(_) => {
-                "Tick music (Lidarr), subtitles (Bazarr), sports (Sportarr) — Porthole starts, stops and wires them."
+                "Tick music, subtitles, sports, racing — Porthole starts, stops and wires them."
+            }
+            CareOp::VpnSetup(_, _) => {
+                "Enter your VPN login (PIA or Proton VPN). Porthole routes downloads through it with a kill switch."
+            }
+            CareOp::LocalClients => {
+                "Set permanent passwords on qBittorrent/SABnzbd and wire them into Sonarr/Radarr as download clients."
             }
             CareOp::CheckUpdates => {
                 "See if any service has a new version. Downloads, but changes nothing."
@@ -851,6 +883,18 @@ impl CareOp {
                 "  4. check every service is healthy".to_string(),
                 "  5. roll back automatically if anything breaks".to_string(),
             ],
+            CareOp::VpnSetup(provider, _) => vec![
+                "Porthole will:".to_string(),
+                format!("  • configure gluetun for {provider} (WireGuard)"),
+                "  • restart gluetun (takes ~30s)".to_string(),
+                "Your key is written to the compose override, never logged.".to_string(),
+            ],
+            CareOp::LocalClients => vec![
+                "Porthole will:".to_string(),
+                "  • set a permanent qBittorrent password (shown once)".to_string(),
+                "  • set SABnzbd's API key and port".to_string(),
+                "  • wire both into Sonarr/Radarr as download clients".to_string(),
+            ],
             CareOp::Uninstall => {
                 let mut lines = vec!["Porthole will remove:".to_string()];
                 lines.extend(crate::care::uninstall_plan(std::path::Path::new(&dir)));
@@ -872,6 +916,8 @@ pub(crate) const CARE_ACTIONS: &[fn() -> CareOp] = &[
     || CareOp::SpeedTest,
     || CareOp::QualityProfiles,
     || CareOp::Extras(crate::extras::Extras::default()),
+    || CareOp::VpnSetup(String::new(), String::new()),
+    || CareOp::LocalClients,
     || CareOp::CheckUpdates,
     || CareOp::CheckPortholeUpdate,
     || CareOp::UpdateFleet,
@@ -883,10 +929,14 @@ pub enum CareView {
     Main,
     PickBackup,
     PickExtras,
+    VpnForm,
     Confirm,
     Working,
     Done,
 }
+
+/// VPN providers gluetun supports well (both have port forwarding).
+pub const VPN_PROVIDERS: &[&str] = &["pia", "protonvpn"];
 
 pub struct CareState {
     pub view: CareView,
@@ -894,6 +944,9 @@ pub struct CareState {
     pub backups: Vec<PathBuf>,
     pub pending_op: Option<CareOp>,
     pub extras_pick: crate::extras::Extras,
+    pub vpn_provider_idx: usize,
+    pub vpn_key: String,
+    pub vpn_field: usize, // 0 = provider, 1 = key
     /// For destructive ops: first Enter arms, second Enter fires.
     pub confirm_armed: bool,
     pub logs: Vec<String>,
@@ -911,6 +964,9 @@ impl CareState {
             backups: Vec::new(),
             pending_op: None,
             extras_pick: crate::extras::Extras::default(),
+            vpn_provider_idx: 0,
+            vpn_key: String::new(),
+            vpn_field: 0,
             confirm_armed: false,
             logs: Vec::new(),
             done_message: String::new(),
@@ -989,6 +1045,12 @@ impl CareState {
                             self.selected = 0;
                             self.view = CareView::PickBackup;
                         }
+                        CareOp::VpnSetup(_, _) => {
+                            self.vpn_provider_idx = 0;
+                            self.vpn_key.clear();
+                            self.vpn_field = 0;
+                            self.view = CareView::VpnForm;
+                        }
                         CareOp::Extras(_) => {
                             // Load current selection from the override file.
                             self.extras_pick = crate::extras::Extras::default();
@@ -999,6 +1061,7 @@ impl CareState {
                                     self.extras_pick.lidarr = yml.contains("lidarr:");
                                     self.extras_pick.bazarr = yml.contains("bazarr:");
                                     self.extras_pick.sportarr = yml.contains("sportarr:");
+                                    self.extras_pick.autobrr = yml.contains("autobrr:");
                                 }
                             }
                             self.selected = 0;
@@ -1037,6 +1100,7 @@ impl CareState {
                     0 => self.extras_pick.lidarr = !self.extras_pick.lidarr,
                     1 => self.extras_pick.bazarr = !self.extras_pick.bazarr,
                     2 => self.extras_pick.sportarr = !self.extras_pick.sportarr,
+                    3 => self.extras_pick.autobrr = !self.extras_pick.autobrr,
                     _ => {}
                 },
                 KeyCode::Enter => {
@@ -1044,6 +1108,35 @@ impl CareState {
                     self.pending_op = Some(CareOp::Extras(self.extras_pick));
                     self.confirm_armed = false;
                     self.view = CareView::Confirm;
+                }
+                KeyCode::Esc => {
+                    self.view = CareView::Main;
+                }
+                _ => {}
+            },
+            CareView::VpnForm => match code {
+                KeyCode::Up | KeyCode::Down => {
+                    self.vpn_field = 1 - self.vpn_field;
+                }
+                KeyCode::Char(' ') if self.vpn_field == 0 => {
+                    self.vpn_provider_idx = (self.vpn_provider_idx + 1) % VPN_PROVIDERS.len();
+                }
+                KeyCode::Char(c) if self.vpn_field == 1 => {
+                    self.vpn_key.push(c);
+                }
+                KeyCode::Backspace if self.vpn_field == 1 => {
+                    self.vpn_key.pop();
+                }
+                KeyCode::Enter => {
+                    if self.vpn_key.trim().is_empty() {
+                        // Don't proceed without a key.
+                    } else {
+                        let provider = VPN_PROVIDERS[self.vpn_provider_idx].to_string();
+                        self.pending_op =
+                            Some(CareOp::VpnSetup(provider, self.vpn_key.trim().to_string()));
+                        self.confirm_armed = false;
+                        self.view = CareView::Confirm;
+                    }
                 }
                 KeyCode::Esc => {
                     self.view = CareView::Main;
@@ -1218,6 +1311,28 @@ fn run_care_op(
             let d = dir()?;
             crate::care::update_fleet(std::path::Path::new(&d), &tx)?;
             Ok("Fleet updated — every service is healthy.".to_string())
+        }
+        CareOp::VpnSetup(provider, key) => {
+            let d = dir()?;
+            let install = std::path::Path::new(&d);
+            crate::care::setup_vpn(install, &provider, &key, &tx)?;
+            Ok("VPN configured — downloads now route through it.".to_string())
+        }
+        CareOp::LocalClients => {
+            let d = dir()?;
+            let install = std::path::Path::new(&d);
+            // SABnzbd: pre-seed port 8081 + API key (before first run if needed).
+            let sab_key = crate::care::sab_api_key(install)?;
+            // qBittorrent: set a permanent password via its WebUI API.
+            let qbit_pw = crate::care::setup_qbit_password(&tx)?;
+            let creds = crate::arr::LocalClients {
+                qbit_password: qbit_pw.clone(),
+                sab_api_key: sab_key,
+            };
+            crate::arr::ensure_local_download_clients(install, &creds, &tx)?;
+            Ok(format!(
+                "Download clients wired. qBittorrent password (save this): {qbit_pw}"
+            ))
         }
         CareOp::CheckPortholeUpdate => {
             unreachable!("handled above")

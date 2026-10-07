@@ -371,6 +371,67 @@ pub fn ensure_prowlarr_apps(
     Ok(())
 }
 
+/// Credentials for the real download clients (local profile).
+pub struct LocalClients {
+    pub qbit_password: String,
+    pub sab_api_key: String,
+}
+
+fn qbit_client_json(password: &str) -> String {
+    format!(
+        r#"{{"name":"qBittorrent","implementation":"QBittorrent","configContract":"QBittorrentSettings","protocol":"torrent","priority":25,"removeCompletedDownloads":true,"removeFailedDownloads":false,"enable":true,"host":"gluetun","port":8080,"useSsl":false,"username":"admin","password":"{pw}","tvCategory":"sonarr","movieCategory":"radarr","musicCategory":"lidarr","contentLayout":"Original","tags":[]}}"#,
+        pw = password.replace('"', "\\\""),
+    )
+}
+
+fn sab_client_json(api_key: &str) -> String {
+    format!(
+        r#"{{"name":"SABnzbd","implementation":"Sabnzbd","configContract":"SabnzbdSettings","protocol":"usenet","priority":25,"removeCompletedDownloads":true,"removeFailedDownloads":false,"enable":true,"host":"gluetun","port":8081,"urlBase":"","apiKey":"{key}","tvCategory":"sonarr","movieCategory":"radarr","musicCategory":"lidarr","tags":[]}}"#,
+        key = api_key.replace('"', "\\\""),
+    )
+}
+
+/// Ensure qBittorrent + SABnzbd are wired as download clients.
+/// Used when the fleet profile needs local (self-downloaded) clients.
+/// qBittorrent and SABnzbd share gluetun's network stack, so the *arrs
+/// reach them at `gluetun:<port>` on media-network.
+pub fn ensure_local_download_clients(
+    install_dir: &std::path::Path,
+    creds: &LocalClients,
+    tx: &std::sync::mpsc::Sender<CareEvent>,
+) -> anyhow::Result<()> {
+    let log = |s: &str| {
+        let _ = tx.send(CareEvent::Log(s.to_string()));
+    };
+    let base: Vec<&Arr> = ARRS.iter().collect();
+    for arr in base {
+        let api_key = match arr_api_key(install_dir, arr.id) {
+            Ok(k) => k,
+            Err(_) => continue, // container not up — skip quietly
+        };
+        for (name, body) in [
+            ("qBittorrent", qbit_client_json(&creds.qbit_password)),
+            ("SABnzbd", sab_client_json(&creds.sab_api_key)),
+        ] {
+            let clients =
+                api_get(arr.port, &api_key, arr.api, "/downloadclient").unwrap_or_default();
+            if clients.contains(&format!("\"name\":\"{name}\"")) {
+                log(&format!("[ok] {}: {name} client already wired", arr.name));
+                continue;
+            }
+            log(&format!(
+                "[in] {}: adding {name} download client…",
+                arr.name
+            ));
+            match api_post(arr.port, &api_key, arr.api, "/downloadclient", &body) {
+                Ok(_) => log(&format!("[ok] {}: {name} wired", arr.name)),
+                Err(e) => log(&format!("[warn] {}: could not add {name}: {e:#}", arr.name)),
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -10,6 +10,7 @@ mod care;
 mod config;
 mod configarr;
 mod docker;
+mod download;
 mod extras;
 mod generate;
 mod media_server;

@@ -808,6 +808,186 @@ pub fn apply_quality_profiles(
 /// Wire the optional extras after they start:
 /// Decypharr download clients + Prowlarr apps for Lidarr/Sportarr,
 /// guided Bazarr setup. Idempotent; skips anything not opted in.
+/// Set up the VPN for the local-download profile.
+/// Patches the download override with the user's VPN credentials,
+/// then restarts gluetun. The user brings their own VPN account
+/// (PIA or Proton VPN recommended — both support port forwarding).
+pub fn setup_vpn(
+    install_dir: &Path,
+    provider: &str,
+    wireguard_key: &str,
+    tx: &Sender<CareEvent>,
+) -> Result<()> {
+    let log = |s: &str| {
+        let _ = tx.send(CareEvent::Log(s.to_string()));
+    };
+    let dest = install_dir.join("docker-compose.override.yml");
+    if !dest.exists() {
+        anyhow::bail!("no download override found — pick Self-downloaded or Hybrid in Setup first");
+    }
+    let mut yml = std::fs::read_to_string(&dest)?;
+    if !yml.contains("gluetun:") {
+        anyhow::bail!("gluetun not in the override — re-run Setup with a local profile");
+    }
+    // Patch the placeholder env vars Porthole generated.
+    yml = yml.replace(
+        "- VPN_SERVICE_PROVIDER=",
+        &format!("- VPN_SERVICE_PROVIDER={provider}"),
+    );
+    yml = yml.replace(
+        "- WIREGUARD_PRIVATE_KEY=",
+        &format!("- WIREGUARD_PRIVATE_KEY={wireguard_key}"),
+    );
+    std::fs::write(&dest, yml)?;
+    log("[ok] VPN credentials written (kept in the override, never logged)");
+    log("[in] restarting gluetun… (this takes ~30s)");
+    let out = std::process::Command::new("docker")
+        .args(["compose", "up", "-d", "gluetun"])
+        .current_dir(install_dir)
+        .output()?;
+    if !out.status.success() {
+        anyhow::bail!("could not restart gluetun");
+    }
+    log("[ok] gluetun restarting — check Care → Doctor to verify the VPN IP");
+    Ok(())
+}
+
+/// Set a permanent qBittorrent password and return it.
+/// qBittorrent 5.x prints a random temp password on first run; Porthole
+/// reads it from the logs, then uses the WebUI API to set a permanent
+/// one (the API takes plaintext and hashes server-side).
+pub fn setup_qbit_password(tx: &Sender<CareEvent>) -> Result<String> {
+    let log = |s: &str| {
+        let _ = tx.send(CareEvent::Log(s.to_string()));
+    };
+    log("[in] reading qBittorrent's temporary password from its logs…");
+    let out = std::process::Command::new("docker")
+        .args(["logs", "qbittorrent"])
+        .output()?;
+    let logs =
+        String::from_utf8_lossy(&out.stdout).to_string() + &String::from_utf8_lossy(&out.stderr);
+    // "A temporary password is provided for this session: <pwd>"
+    let temp = logs
+        .lines()
+        .rev()
+        .find_map(|l| {
+            l.find("temporary password is provided for this session:")
+                .map(|i| {
+                    l[i + "temporary password is provided for this session:".len()..]
+                        .trim()
+                        .to_string()
+                })
+        })
+        .filter(|s| !s.is_empty());
+    let temp = match temp {
+        Some(t) => t,
+        None => {
+            anyhow::bail!("couldn't find the temp password in qbittorrent's logs — is it running?")
+        }
+    };
+    // Generate a permanent password (CSPRNG, like the *arr API keys).
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes).map_err(|e| anyhow::anyhow!("no entropy: {e}"))?;
+    let permanent: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    log("[in] setting a permanent password via the WebUI API…");
+    // Login with temp password to get a session cookie.
+    let login = std::process::Command::new("curl")
+        .args([
+            "-sf",
+            "--connect-timeout",
+            "5",
+            "--max-time",
+            "15",
+            "-c",
+            "/tmp/qbit-cookie",
+            "-d",
+            &format!("username=admin&password={temp}"),
+            "http://localhost:8080/api/v2/auth/login",
+        ])
+        .output()?;
+    if !login.status.success() {
+        anyhow::bail!("couldn't log into qBittorrent — is the WebUI up?");
+    }
+    // Set the permanent password (plaintext; qbit hashes it).
+    let set = std::process::Command::new("curl")
+        .args([
+            "-sf",
+            "--connect-timeout",
+            "5",
+            "--max-time",
+            "15",
+            "-b",
+            "/tmp/qbit-cookie",
+            "-d",
+            &format!("json={{\"web_ui_password\":\"{permanent}\"}}"),
+            "http://localhost:8080/api/v2/app/setPreferences",
+        ])
+        .output()?;
+    let _ = std::fs::remove_file("/tmp/qbit-cookie");
+    if !set.status.success() {
+        anyhow::bail!("couldn't set the permanent password");
+    }
+    // Also set Content Layout to "Original" (the *arr import logic assumes it).
+    let _ = std::process::Command::new("curl")
+        .args([
+            "-sf",
+            "--connect-timeout",
+            "5",
+            "--max-time",
+            "15",
+            "-b",
+            "/tmp/qbit-cookie2",
+            "-d",
+            &format!("username=admin&password={permanent}"),
+            "http://localhost:8080/api/v2/auth/login",
+        ])
+        .output();
+    let _ = std::process::Command::new("curl")
+        .args([
+            "-sf",
+            "--connect-timeout",
+            "5",
+            "--max-time",
+            "15",
+            "-b",
+            "/tmp/qbit-cookie2",
+            "-d",
+            "{\"torrent_content_layout\":\"Original\"}",
+            "http://localhost:8080/api/v2/app/setPreferences",
+        ])
+        .output();
+    let _ = std::fs::remove_file("/tmp/qbit-cookie2");
+    log("[ok] qBittorrent password set (shown once — save it for the WebUI)");
+    Ok(permanent)
+}
+
+/// Get (or pre-seed) SABnzbd's API key.
+/// Pre-seeds `/config/sabnzbd.ini` with port 8081 (qBittorrent already
+/// has 8080 on gluetun's shared network stack) before first run.
+pub fn sab_api_key(install_dir: &Path) -> Result<String> {
+    let ini = install_dir.join("configs/sabnzbd/sabnzbd.ini");
+    if ini.exists() {
+        let content = std::fs::read_to_string(&ini)?;
+        if let Some(key) = content.lines().find_map(|l| {
+            let l = l.trim();
+            l.strip_prefix("api_key = ").map(|s| s.trim().to_string())
+        }) {
+            if !key.is_empty() {
+                return Ok(key);
+            }
+        }
+    }
+    // Pre-seed: port 8081 + a fresh API key. SABnzbd fills in the rest.
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes).map_err(|e| anyhow::anyhow!("no entropy: {e}"))?;
+    let key: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    if let Some(parent) = ini.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&ini, format!("[misc]\nport = 8081\napi_key = {key}\n"))?;
+    Ok(key)
+}
+
 pub fn wire_extras(install_dir: &Path, tx: &Sender<CareEvent>) -> Result<()> {
     let log = |s: &str| {
         let _ = tx.send(CareEvent::Log(s.to_string()));

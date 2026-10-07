@@ -63,6 +63,10 @@ pub struct Preferences {
     pub quality_4k: bool,
     /// Optional fleet members.
     pub extras: crate::extras::Extras,
+    /// How downloads happen: debrid vs self-downloaded vs hybrid.
+    pub fleet_profile: crate::download::FleetProfile,
+    /// Which debrid service (for Debrid/Hybrid profiles).
+    pub debrid_provider: crate::download::DebridProvider,
 }
 
 impl Default for Preferences {
@@ -77,6 +81,8 @@ impl Default for Preferences {
             tz: "UTC".to_string(),
             quality_4k: false,
             extras: crate::extras::Extras::default(),
+            fleet_profile: crate::download::FleetProfile::default(),
+            debrid_provider: crate::download::DebridProvider::default(),
         }
     }
 }
@@ -211,6 +217,20 @@ pub fn run_provision(prefs: Preferences, tx: Sender<ProvEvent>) {
         &quality_path,
         if prefs.quality_4k { "4k\n" } else { "1080p\n" },
     );
+    // Remember the download choices too (Doctor + Care need them).
+    let profile_path = std::path::Path::new(&prefs.install_dir).join(".porthole-profile");
+    let _ = std::fs::write(
+        &profile_path,
+        format!(
+            "{}\n{}\n",
+            match prefs.fleet_profile {
+                crate::download::FleetProfile::Debrid => "debrid",
+                crate::download::FleetProfile::Local => "local",
+                crate::download::FleetProfile::Hybrid => "hybrid",
+            },
+            prefs.debrid_provider.decypharr_id(),
+        ),
+    );
 
     // Write the extras override BEFORE setup.sh runs `docker compose up`
     // (the installer's compose wrapper auto-discovers it).
@@ -220,6 +240,31 @@ pub fn run_provision(prefs: Preferences, tx: Sender<ProvEvent>) {
     }
     if let Err(e) = crate::extras::ensure_data_dirs(install, &prefs.extras) {
         log(&format!("[warn] could not create extras data dirs: {e:#}"));
+    }
+
+    // Write the download-clients override BEFORE setup.sh runs
+    // `docker compose up` (same auto-discovery).
+    if prefs.fleet_profile.needs_local_clients() {
+        let dl = crate::download::render_download_override();
+        let dest = install.join("docker-compose.override.yml");
+        let mut merged = String::new();
+        if dest.exists() {
+            merged = std::fs::read_to_string(&dest).unwrap_or_default();
+            if !merged.ends_with('\n') {
+                merged.push('\n');
+            }
+        }
+        merged.push_str(&dl);
+        if let Err(e) = std::fs::write(&dest, merged) {
+            log(&format!("[warn] could not write download override: {e:#}"));
+        } else {
+            log("[ok] download clients (gluetun + qBittorrent + SABnzbd) queued");
+        }
+        if prefs.fleet_profile == crate::download::FleetProfile::Local
+            || prefs.fleet_profile == crate::download::FleetProfile::Hybrid
+        {
+            log("[note] Self-downloaded needs a VPN login — add it in Care → Set up VPN for downloads");
+        }
     }
 
     // ── Step 0: toolbox ──
@@ -397,6 +442,24 @@ pub fn run_provision(prefs: Preferences, tx: Sender<ProvEvent>) {
     // ── Step 5: expert quality profiles (Configarr) ──
     // Best-effort: a Configarr failure must not fail the whole install.
     if all_ok {
+        // Point Decypharr at the chosen debrid provider first (the
+        // installer always writes TorBox; correct it when different).
+        if prefs.fleet_profile.needs_debrid()
+            && prefs.debrid_provider != crate::download::DebridProvider::TorBox
+        {
+            let install = std::path::Path::new(&prefs.install_dir);
+            match crate::download::set_debrid_provider(
+                install,
+                &prefs.debrid_provider,
+                &prefs.torbox_api_key,
+            ) {
+                Ok(()) => log(&format!(
+                    "[ok] Decypharr now uses {}",
+                    prefs.debrid_provider.label()
+                )),
+                Err(e) => log(&format!("[warn] debrid provider not switched: {e:#}")),
+            }
+        }
         send(ProvEvent::StepBegin(5));
         log("[in] applying expert quality profiles (TRaSH Guides)…");
         let install = std::path::Path::new(&prefs.install_dir);

@@ -194,6 +194,31 @@ pub static INTEGRATIONS: &[Integration] = &[
         plain: "Same expert tuning for movies: quality, formats and naming, kept in sync.",
     },
     Integration {
+        from: "Gluetun",
+        to: "qBittorrent",
+        plain: "Torrents run through your VPN — and if the VPN drops, the kill switch cuts everything. Nothing leaks.",
+    },
+    Integration {
+        from: "Gluetun",
+        to: "SABnzbd",
+        plain: "Usenet downloads ride the same VPN tunnel, same kill-switch protection.",
+    },
+    Integration {
+        from: "qBittorrent",
+        to: "Sonarr",
+        plain: "Finished episodes are handed to Sonarr by itself — it just appears in your library.",
+    },
+    Integration {
+        from: "SABnzbd",
+        to: "Sonarr",
+        plain: "Usenet grabs flow straight into Sonarr, no manual importing.",
+    },
+    Integration {
+        from: "autobrr",
+        to: "qBittorrent",
+        plain: "Catches new releases on private trackers the second they appear and pushes them to download.",
+    },
+    Integration {
         from: "Decypharr",
         to: "Lidarr",
         plain: "Finished albums are handed to Lidarr by itself — music included.",

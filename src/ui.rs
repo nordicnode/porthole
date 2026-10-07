@@ -346,9 +346,9 @@ fn render_prefs(f: &mut Frame, app: &App, area: Rect) {
     let s = w.form_selected;
     let rows = vec![
         form_row(
-            "TorBox key",
+            "Debrid key",
             &p.torbox_api_key,
-            "Your API key from torbox.app — kept masked, never shown",
+            "API key for your debrid service — kept masked, never shown",
             s == 0,
             true,
         ),
@@ -505,16 +505,63 @@ fn render_prefs(f: &mut Frame, app: &App, area: Rect) {
                 ),
             ]),
         ])),
+        ListItem::new(Text::from(vec![
+            Line::from(vec![
+                Span::styled(
+                    if s == 11 { "▸ " } else { "  " },
+                    Style::default().fg(ACCENT),
+                ),
+                Span::styled(
+                    format!("{:<14}", "Downloads via"),
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("< {} >", p.fleet_profile.label()),
+                    Style::default().fg(ACCENT),
+                ),
+            ]),
+            Line::from(vec![
+                Span::raw("    "),
+                Span::styled(
+                    "Debrid = simple. Self-downloaded = private, needs a VPN login later.",
+                    Style::default().fg(DIM),
+                ),
+            ]),
+        ])),
+        ListItem::new(Text::from(vec![
+            Line::from(vec![
+                Span::styled(
+                    if s == 12 { "▸ " } else { "  " },
+                    Style::default().fg(ACCENT),
+                ),
+                Span::styled(
+                    format!("{:<14}", "Debrid service"),
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("< {} >", p.debrid_provider.label()),
+                    Style::default().fg(ACCENT),
+                ),
+            ]),
+            Line::from(vec![
+                Span::raw("    "),
+                Span::styled(p.debrid_provider.blurb(), Style::default().fg(DIM)),
+            ]),
+        ])),
         ListItem::new(Line::from(vec![
             Span::styled(
-                if s == 10 { "▸ " } else { "  " },
+                if s == 13 { "▸ " } else { "  " },
                 Style::default().fg(ACCENT),
             ),
             Span::styled(
                 "[ Review the plan → ]",
                 Style::default()
-                    .fg(if s == 10 { Color::Black } else { GOOD })
-                    .bg(if s == 10 { GOOD } else { Color::Reset })
+                    .fg(if s == 13 { Color::Black } else { GOOD })
+                    .bg(if s == 13 { GOOD } else { Color::Reset })
                     .add_modifier(Modifier::BOLD),
             ),
         ])),
@@ -573,6 +620,32 @@ fn render_plan(f: &mut Frame, app: &App, area: Rect) {
             Span::styled(format!("  {k:<20}"), Style::default().fg(DIM)),
             Span::styled(v, Style::default().fg(Color::White)),
         ]));
+    }
+    lines.push(Line::from(vec![
+        Span::styled(
+            format!("  {:<20}", "Downloads via"),
+            Style::default().fg(DIM),
+        ),
+        Span::styled(
+            w.prefs.fleet_profile.label(),
+            Style::default().fg(Color::White),
+        ),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled(
+            format!("  {:<20}", "Debrid service"),
+            Style::default().fg(DIM),
+        ),
+        Span::styled(
+            w.prefs.debrid_provider.label(),
+            Style::default().fg(Color::White),
+        ),
+    ]));
+    if w.prefs.fleet_profile.needs_local_clients() {
+        lines.push(Line::from(vec![Span::styled(
+            "  (Self-downloaded needs a VPN login — you'll add it in Care afterwards)",
+            Style::default().fg(WARM),
+        )]));
     }
     lines.push(Line::from(""));
     lines.push(Line::from(vec![Span::styled(
@@ -868,6 +941,11 @@ fn render_care(f: &mut Frame, app: &App, area: Rect) {
                     e.sportarr,
                     "Follows your teams. Newer — opt-in.",
                 ),
+                (
+                    "Racing (autobrr)",
+                    e.autobrr,
+                    "Grabs private-tracker releases the second they appear. Power users.",
+                ),
             ];
             let mut items: Vec<ListItem> = vec![ListItem::new(Line::from(vec![Span::styled(
                 "Which extras should join the fleet?",
@@ -899,6 +977,69 @@ fn render_care(f: &mut Frame, app: &App, area: Rect) {
                 Style::default().fg(DIM),
             )])));
             let list = List::new(items).block(title_block("Extra services"));
+            f.render_widget(list, area);
+        }
+        CareView::VpnForm => {
+            let providers = crate::app::VPN_PROVIDERS;
+            let prov = providers[c.vpn_provider_idx % providers.len()];
+            let masked = "•".repeat(c.vpn_key.chars().count());
+            let masked_empty = masked.is_empty();
+            let items = vec![
+                ListItem::new(Line::from(vec![Span::styled(
+                    "Your VPN login — downloads route through it.",
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::ITALIC),
+                )])),
+                ListItem::new(Text::from(vec![
+                    Line::from(vec![
+                        Span::styled(
+                            if c.vpn_field == 0 { "▸ " } else { "  " },
+                            Style::default().fg(ACCENT),
+                        ),
+                        Span::styled(
+                            format!("Provider:  < {prov} >"),
+                            Style::default().fg(Color::White),
+                        ),
+                    ]),
+                    Line::from(vec![
+                        Span::raw("    "),
+                        Span::styled(
+                            "Space switches · PIA or Proton VPN (both support port forwarding)",
+                            Style::default().fg(DIM),
+                        ),
+                    ]),
+                ])),
+                ListItem::new(Text::from(vec![
+                    Line::from(vec![
+                        Span::styled(
+                            if c.vpn_field == 1 { "▸ " } else { "  " },
+                            Style::default().fg(ACCENT),
+                        ),
+                        Span::styled("WireGuard key:  ", Style::default().fg(Color::White)),
+                        Span::styled(
+                            if masked_empty {
+                                "(paste it here)".to_string()
+                            } else {
+                                masked
+                            },
+                            Style::default().fg(if masked_empty { DIM } else { GOOD }),
+                        ),
+                    ]),
+                    Line::from(vec![
+                        Span::raw("    "),
+                        Span::styled(
+                            "From your VPN provider's dashboard (WireGuard private key)",
+                            Style::default().fg(DIM),
+                        ),
+                    ]),
+                ])),
+                ListItem::new(Line::from(vec![Span::styled(
+                    "↑↓ switch field · Enter continues · Esc cancels",
+                    Style::default().fg(DIM),
+                )])),
+            ];
+            let list = List::new(items).block(title_block("VPN for downloads"));
             f.render_widget(list, area);
         }
         CareView::Confirm => {
@@ -1021,7 +1162,7 @@ fn render_logs(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn render_help(f: &mut Frame, area: Rect) {
-    let text = Text::from(vec![
+    let mut text = Text::from(vec![
         Line::from(""),
         Line::from(vec![Span::styled(
             "Porthole in one paragraph",
@@ -1064,10 +1205,36 @@ fn render_help(f: &mut Frame, area: Rect) {
         Line::from("  q              quit"),
         Line::from(""),
         Line::from(vec![Span::styled(
-            "Built on the proven TorBox-Media-Server installer (55★).",
-            Style::default().fg(DIM),
+            "Privacy — what your provider can see",
+            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
         )]),
+        Line::from(""),
     ]);
+    for line in crate::download::privacy_explainer() {
+        if line.is_empty() {
+            text.lines.push(Line::from(""));
+        } else if line.starts_with("•") {
+            text.lines
+                .push(Line::from(Span::styled(line, Style::default().fg(DIM))));
+        } else if line.ends_with(":") {
+            text.lines.push(Line::from(vec![Span::styled(
+                line,
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            )]));
+        } else {
+            text.lines.push(Line::from(Span::styled(
+                line,
+                Style::default().fg(Color::White),
+            )));
+        }
+    }
+    text.lines.push(Line::from(""));
+    text.lines.push(Line::from(vec![Span::styled(
+        "Built on the proven TorBox-Media-Server installer (55★).",
+        Style::default().fg(DIM),
+    )]));
     let para = Paragraph::new(text).block(title_block("Help"));
     f.render_widget(para, area);
 }

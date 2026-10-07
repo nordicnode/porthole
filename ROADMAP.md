@@ -340,7 +340,7 @@ whole thing is — becomes a first-class choice. Researched October 2026.
 **Debrid provider choice** (all five integrate with Decypharr via API
 key, so swapping is a config change, not a rebuild):
 
-- [ ] Wizard asks which debrid: **Premiumize** (recommended — bundles
+- [x] Wizard asks which debrid: **Premiumize** (recommended — bundles
       debrid + cloud + Usenet + VPN, excellent API; watch the point-based
       fair use under heavy *arr automation), **AllDebrid** (budget pick),
       **TorBox** (current default, kept for continuity — but the July
@@ -348,14 +348,14 @@ key, so swapping is a config change, not a rebuild):
       in the wizard), **Debrid-Link** (built-in seeding), **Real-Debrid**
       (fallback only — keyword copyright filter since May 2026 broke
       50–70% of cached mainstream 4K; strict single-IP enforcement).
-- [ ] No service has an official Sonarr/Radarr plugin; Decypharr remains
+- [x] No service has an official Sonarr/Radarr plugin; Decypharr remains
       the multi-provider standard. Porthole pins a Decypharr build with
       the TorBox fixes (community forks carry unmerged patches).
 
 **The privacy stack** — what the ISP can and cannot see, in plain
 language on screen:
 
-- [ ] **The local-download privacy profile**: **gluetun** as the Docker
+- [x] **The local-download privacy profile**: **gluetun** as the Docker
       VPN gateway (still the 2026 standard) — qBittorrent/SABnzbd/Prowlarr
       ride `network_mode: service:gluetun`; kill switch is gluetun's
       built-in firewall (on by default); qBittorrent additionally bound
@@ -364,25 +364,25 @@ language on screen:
       (Mullvad is private but dropped port forwarding — worse for
       seeding; Nord/Surfshark/Express have none). Plex/Jellyfin/Seerr
       stay OFF the VPN.
-- [ ] **Honest guidance Porthole gives**: Usenet-over-SSL and debrid-over-
+- [x] **Honest guidance Porthole gives**: Usenet-over-SSL and debrid-over-
       HTTPS already blind the ISP to *content* (it sees only encrypted
       sessions, endpoints, timing, volume — no swarm, no harvestable
       IPs); a VPN on top hides *which* provider you use. **WARP is not a
       VPN replacement** — it encrypts transit from the ISP but Cloudflare
       sees everything, with ~2yr retention and no location choice.
       Porthole says this plainly instead of offering a WARP toggle.
-- [ ] **Fleet profiles in the wizard**: *Debrid (recommended)* vs
+- [x] **Fleet profiles in the wizard**: *Debrid (recommended)* vs
       *Usenet + Torrent (self-downloaded, VPN-routed)* vs *Hybrid*. One
       question, everything downstream rewires: *arr download clients
       point at Decypharr's mocks or the real clients; categories
       (`sonarr`, `radarr`, `lidarr`…) configured automatically.
-- [ ] **SABnzbd 5.x** — the default NZB client (best *arr integration).
+- [x] **SABnzbd 5.x** — the default NZB client (best *arr integration).
       The nzbget.com community fork as the lightweight alternative
       (original NZBGet is discontinued — never ship the dead repo).
-- [ ] **qBittorrent 5.x** — the default torrent client (native categories
+- [x] **qBittorrent 5.x** — the default torrent client (native categories
       the *arrs' import logic assumes). Transmission/Deluge only if a
       user brings their own.
-- [ ] **autobrr** as the optional power-user add for private-tracker
+- [x] **autobrr** as the optional power-user add for private-tracker
       racing; **seedboxes** documented as the heavy-seeding alternative
       (largely redundant if you already pay for debrid).
 
@@ -419,6 +419,16 @@ language on screen:
 - **autobrr has no shippable defaults** (v1.87.0) — filters are
   inherently manual. Porthole deploys it, wires the *arr APIs, and
   ships commented example filters. Honest, not magic.
+
+**Phase 8 status: 10/10.** Shipped 2026-10-07: `src/download.rs` (fleet profiles,
+debrid providers, gluetun+qbit+sab override, Decypharr provider switching),
+wizard gains Downloads-via + Debrid-service questions, Care gains Set-up-VPN
+(form: provider toggle + WireGuard key paste) and Wire-up-download-clients
+(qbit permanent password via WebUI API, SABnzbd pre-seed on 8081), Doctor's
+download-client check is profile-aware, autobrr joins the extras picker,
+privacy explainer in Help. VPN credentials are user-supplied (PIA/Proton);
+qBittorrent's random first-run password is replaced via its API (plaintext
+accepted, hashed server-side) — no PBKDF2 guessing.
 
 ## Phase 9 — Storage: your drives, your cloud, encrypted
 

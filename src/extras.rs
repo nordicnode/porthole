@@ -16,11 +16,12 @@ pub struct Extras {
     pub lidarr: bool,
     pub bazarr: bool,
     pub sportarr: bool,
+    pub autobrr: bool,
 }
 
 impl Extras {
     pub fn any(&self) -> bool {
-        self.lidarr || self.bazarr || self.sportarr
+        self.lidarr || self.bazarr || self.sportarr || self.autobrr
     }
 }
 
@@ -74,6 +75,24 @@ pub fn render_override_yml(extras: &Extras) -> String {
              \x20\x20\x20 volumes:\n\
              \x20\x20\x20\x20\x20 - \"${CONFIG_DIR}/bazarr:/config\"\n\
              \x20\x20\x20\x20\x20 - \"${DATA_DIR}:/data\"\n",
+        );
+    }
+    if extras.autobrr {
+        out.push_str(
+            "  autobrr:\n\
+             \x20\x20\x20 image: ghcr.io/autobrr/autobrr:latest\n\
+             \x20\x20\x20 container_name: autobrr\n\
+             \x20\x20\x20 restart: unless-stopped\n\
+             \x20\x20\x20 networks:\n\
+             \x20\x20\x20\x20\x20 - media-network\n\
+             \x20\x20\x20 ports:\n\
+             \x20\x20\x20\x20\x20 - \"127.0.0.1:7474:7474\"\n\
+             \x20\x20\x20 environment:\n\
+             \x20\x20\x20\x20\x20 - PUID=${PUID:-1000}\n\
+             \x20\x20\x20\x20\x20 - PGID=${PGID:-1000}\n\
+             \x20\x20\x20\x20\x20 - TZ=${TZ:-UTC}\n\
+             \x20\x20\x20 volumes:\n\
+             \x20\x20\x20\x20\x20 - \"${CONFIG_DIR}/autobrr:/config\"\n",
         );
     }
     if extras.sportarr {
@@ -151,6 +170,7 @@ mod tests {
             lidarr: true,
             bazarr: false,
             sportarr: true,
+            autobrr: true,
         };
         let yml = render_override_yml(&e);
         assert!(yml.contains("lidarr:"));
