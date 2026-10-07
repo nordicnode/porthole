@@ -129,16 +129,12 @@ pub fn uninstall(install_dir: &Path, tx: &Sender<CareEvent>) -> Result<()> {
     };
     // 1. Containers down via compose if we have it, else per-container.
     let compose_yml = install_dir.join("docker-compose.yml");
+    // No -f: auto-discovers the override so extras/companions are removed too.
     if compose_yml.is_file() && docker::compose_available() {
         log("[in] bringing containers down…");
         let ok = Command::new("docker")
-            .args([
-                "compose",
-                "-f",
-                &compose_yml.to_string_lossy(),
-                "down",
-                "--remove-orphans",
-            ])
+            .args(["compose", "down", "--remove-orphans"])
+            .current_dir(install_dir)
             .status()
             .map(|s| s.success())
             .unwrap_or(false);
@@ -195,14 +191,10 @@ pub fn check_updates(install_dir: &Path, tx: &Sender<CareEvent>) -> Result<Vec<U
     // Snapshot image IDs before pulling.
     let before = image_ids(install_dir);
     log("[in] pulling latest images (this can take a while)…");
+    // No -f: auto-discovers docker-compose.override.yml (extras/companions).
     let out = Command::new("docker")
-        .args([
-            "compose",
-            "-f",
-            &compose_yml.to_string_lossy(),
-            "pull",
-            "--quiet",
-        ])
+        .args(["compose", "pull", "--quiet"])
+        .current_dir(install_dir)
         .output()
         .context("running docker compose pull")?;
     for line in String::from_utf8_lossy(&out.stdout).lines() {
@@ -255,15 +247,11 @@ fn image_ids(install_dir: &Path) -> std::collections::HashMap<String, String> {
 }
 
 fn service_image(install_dir: &Path, service_id: &str) -> Option<String> {
+    // Don't use -f: docker compose auto-discovers docker-compose.override.yml
+    // when run from the install dir (extras/companions live there).
     let out = Command::new("docker")
-        .args([
-            "compose",
-            "-f",
-            &install_dir.join("docker-compose.yml").to_string_lossy(),
-            "config",
-            "--format",
-            "json",
-        ])
+        .args(["compose", "config", "--format", "json"])
+        .current_dir(install_dir)
         .output()
         .ok()?;
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
@@ -313,16 +301,11 @@ pub fn update_fleet(install_dir: &Path, tx: &Sender<CareEvent>) -> Result<()> {
     ));
 
     // 3. Pull + restart.
+    // (No -f: auto-discovers docker-compose.override.yml.)
     log("[in] pulling latest images…");
-    let compose_yml = install_dir.join("docker-compose.yml");
     let pull_ok = Command::new("docker")
-        .args([
-            "compose",
-            "-f",
-            &compose_yml.to_string_lossy(),
-            "pull",
-            "--quiet",
-        ])
+        .args(["compose", "pull", "--quiet"])
+        .current_dir(install_dir)
         .status()
         .map(|s| s.success())
         .unwrap_or(false);
@@ -331,14 +314,8 @@ pub fn update_fleet(install_dir: &Path, tx: &Sender<CareEvent>) -> Result<()> {
     }
     log("[in] restarting services…");
     let up_ok = Command::new("docker")
-        .args([
-            "compose",
-            "-f",
-            &compose_yml.to_string_lossy(),
-            "up",
-            "-d",
-            "--remove-orphans",
-        ])
+        .args(["compose", "up", "-d", "--remove-orphans"])
+        .current_dir(install_dir)
         .status()
         .map(|s| s.success())
         .unwrap_or(false);

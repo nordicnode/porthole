@@ -198,17 +198,17 @@ pub fn hardlink_smoke_test(install_dir: &Path) -> Result<(), String> {
     let names = String::from_utf8_lossy(&out.stdout);
     let container = names
         .lines()
-        .find(|n| *n == "sonarr" || *n == "radarr" || *n == "lidarr")
+        .find(|n| *n == "sonarr" || *n == "radarr" || *n == "lidarr" || *n == "sportarr")
         .ok_or_else(|| "no *arr container running to test inside".to_string())?;
-    let data_dir = install_dir.join("data");
     // The test must run against the same /data the containers see.
+    // (The installer bind-mounts ${DATA_DIR} at /data in every container.)
     let probe =
         "touch /data/.porthole-link-test && ln /data/.porthole-link-test /data/.porthole-link-test2 && rm /data/.porthole-link-test /data/.porthole-link-test2 && echo OK";
     let out = std::process::Command::new("docker")
         .args(["exec", container, "sh", "-c", probe])
         .output()
         .map_err(|e| format!("docker exec failed: {e}"))?;
-    let _ = data_dir; // (host path documented for the operator)
+    let _ = install_dir; // (host path for operator reference)
     if out.status.success() && String::from_utf8_lossy(&out.stdout).contains("OK") {
         Ok(())
     } else {

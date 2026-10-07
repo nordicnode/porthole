@@ -141,6 +141,67 @@ impl Preferences {
     }
 }
 
+/// Service IDs that should be running after provisioning,
+/// based on the user's choices (not everything in SERVICES).
+fn expected_service_ids(prefs: &Preferences) -> Vec<&'static str> {
+    let mut ids = vec![
+        "decypharr",
+        "prowlarr",
+        "byparr",
+        "sonarr",
+        "radarr",
+        "seerr",
+    ];
+    match prefs.media_server {
+        MediaServer::Plex => ids.push("plex"),
+        MediaServer::Jellyfin => ids.push("jellyfin"),
+    }
+    let e = &prefs.extras;
+    if e.lidarr {
+        ids.push("lidarr");
+    }
+    if e.bazarr {
+        ids.push("bazarr");
+    }
+    if e.sportarr {
+        ids.push("sportarr");
+    }
+    if e.autobrr {
+        ids.push("autobrr");
+    }
+    if e.unpackerr {
+        ids.push("unpackerr");
+    }
+    if e.cleanuparr {
+        ids.push("cleanuparr");
+    }
+    if e.maintainerr {
+        ids.push("maintainerr");
+    }
+    if e.janitorr {
+        ids.push("janitorr");
+    }
+    if e.tautulli {
+        ids.push("tautulli");
+    }
+    if e.jellystat {
+        ids.push("jellystat");
+        ids.push("jellystat-db");
+    }
+    if e.wizarr {
+        ids.push("wizarr");
+    }
+    if e.kometa {
+        ids.push("kometa");
+    }
+    // Local-download profile (gluetun has no UI port, but qbit/sab do).
+    if prefs.fleet_profile.needs_local_clients() {
+        ids.push("qbittorrent");
+        ids.push("sabnzbd");
+    }
+    ids
+}
+
 /// One provisioning step.
 pub struct StepDef {
     pub title: &'static str,
@@ -222,13 +283,14 @@ pub fn run_provision(prefs: Preferences, tx: Sender<ProvEvent>) {
     let _ = std::fs::write(
         &profile_path,
         format!(
-            "{}\n{}\n",
+            "{}\n{}\n{}\n",
             match prefs.fleet_profile {
                 crate::download::FleetProfile::Debrid => "debrid",
                 crate::download::FleetProfile::Local => "local",
                 crate::download::FleetProfile::Hybrid => "hybrid",
             },
             prefs.debrid_provider.decypharr_id(),
+            prefs.media_server.as_str(),
         ),
     );
 
@@ -291,17 +353,68 @@ pub fn run_provision(prefs: Preferences, tx: Sender<ProvEvent>) {
     send(ProvEvent::StepDone(0, true));
 
     // ── Step 1: ports ──
+    // Only check ports for services that will actually be installed:
+    // the base fleet + selected media server + opted-in extras/companions.
+    // (Checking Plex's port when the user picked Jellyfin was a real bug.)
     send(ProvEvent::StepBegin(1));
     let mut ports_ok = true;
-    for svc in SERVICES.iter().filter(|s| s.port != 0) {
-        if docker::port_in_use(svc.port) {
+    let mut needed_ports: Vec<(u16, &str)> = vec![
+        (8282, "Decypharr"),
+        (9696, "Prowlarr"),
+        (8191, "Byparr"),
+        (8989, "Sonarr"),
+        (7878, "Radarr"),
+        (5055, "Seerr"),
+    ];
+    match prefs.media_server {
+        crate::provision::MediaServer::Plex => needed_ports.push((32400, "Plex")),
+        crate::provision::MediaServer::Jellyfin => needed_ports.push((8096, "Jellyfin")),
+    }
+    // Extras (only opted-in).
+    let e = &prefs.extras;
+    if e.lidarr {
+        needed_ports.push((8686, "Lidarr"));
+    }
+    if e.bazarr {
+        needed_ports.push((6767, "Bazarr"));
+    }
+    if e.sportarr {
+        needed_ports.push((1867, "Sportarr"));
+    }
+    if e.autobrr {
+        needed_ports.push((7474, "autobrr"));
+    }
+    if e.cleanuparr {
+        needed_ports.push((11011, "Cleanuparr"));
+    }
+    if e.maintainerr {
+        needed_ports.push((6246, "Maintainerr"));
+    }
+    if e.janitorr {
+        needed_ports.push((8978, "Janitorr"));
+    }
+    if e.tautulli {
+        needed_ports.push((8181, "Tautulli"));
+    }
+    if e.jellystat {
+        needed_ports.push((3000, "Jellystat"));
+    }
+    if e.wizarr {
+        needed_ports.push((5690, "Wizarr"));
+    }
+    // Local-download profile: gluetun publishes qbit/sab ports.
+    if prefs.fleet_profile.needs_local_clients() {
+        needed_ports.push((8080, "qBittorrent"));
+        needed_ports.push((8081, "SABnzbd"));
+    }
+    for (port, name) in needed_ports {
+        if docker::port_in_use(port) {
             log(&format!(
-                "[fail] port {} is already in use (needed by {})",
-                svc.port, svc.name
+                "[fail] port {port} is already in use (needed by {name})"
             ));
             ports_ok = false;
         } else {
-            log(&format!("[ok] port {} free ({})", svc.port, svc.name));
+            log(&format!("[ok] port {port} free ({name})"));
         }
     }
     send(ProvEvent::StepDone(1, ports_ok));
@@ -414,7 +527,13 @@ pub fn run_provision(prefs: Preferences, tx: Sender<ProvEvent>) {
     std::thread::sleep(std::time::Duration::from_secs(3));
     let statuses = docker::service_statuses();
     let mut all_ok = true;
+    // Only expect services that should be installed (not the ones the
+    // user didn't pick — their absence is correct, not a failure).
+    let expected = expected_service_ids(&prefs);
     for svc in SERVICES.iter().filter(|s| s.port != 0) {
+        if !expected.contains(&svc.id) {
+            continue;
+        }
         match statuses
             .get(svc.id)
             .copied()

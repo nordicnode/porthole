@@ -168,6 +168,41 @@ pub static SERVICES: &[Service] = &[
         port: 0, // no UI; runs on schedule
         group: "Care",
     },
+    Service {
+        id: "autobrr",
+        name: "autobrr",
+        plain: "Catches private-tracker releases the second they appear.",
+        port: 7474,
+        group: "Extras",
+    },
+    Service {
+        id: "gluetun",
+        name: "Gluetun",
+        plain: "The VPN gateway. Downloads route through it; the kill switch protects you.",
+        port: 0, // no UI; network gateway
+        group: "Downloads",
+    },
+    Service {
+        id: "qbittorrent",
+        name: "qBittorrent",
+        plain: "Torrent downloads (VPN-routed). The *arrs feed it automatically.",
+        port: 8080,
+        group: "Downloads",
+    },
+    Service {
+        id: "sabnzbd",
+        name: "SABnzbd",
+        plain: "Usenet downloads (VPN-routed). The *arrs feed it automatically.",
+        port: 8081,
+        group: "Downloads",
+    },
+    Service {
+        id: "jellystat-db",
+        name: "Jellystat DB",
+        plain: "The database behind Jellystat's watch history.",
+        port: 0, // no UI; internal
+        group: "Care",
+    },
 ];
 
 /// The wiring map. This is Porthole's real product: every introduction below

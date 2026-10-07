@@ -103,6 +103,18 @@ impl WizardState {
         }
     }
 
+    /// True when the wizard is in a text field (not a toggle).
+    /// Global shortcuts (q, 1-6, ?, Tab) must not fire while typing.
+    fn is_text_input(&self) -> bool {
+        self.phase == WizardPhase::Prefs && Self::is_text_row(self.form_selected)
+    }
+
+    /// Which rows are text inputs (vs toggles/submit).
+    /// Single source of truth — keep in sync with `field_mut`.
+    fn is_text_row(row: usize) -> bool {
+        matches!(row, 0 | 1 | 3 | 4 | 5)
+    }
+
     fn submit_prefs(&mut self) {
         let errs = self.prefs.validate();
         if errs.is_empty() {
@@ -606,7 +618,28 @@ impl DoctorState {
         }
 
         // Every service: exists? running? actually answering?
+        // Only warn about NotInstalled for base services — an extra the
+        // user never opted into isn't "missing", it's a choice.
         let statuses = docker::service_statuses();
+        let base_ids = [
+            "decypharr",
+            "prowlarr",
+            "byparr",
+            "sonarr",
+            "radarr",
+            "seerr",
+        ];
+        // Which media server did the user pick? (From .porthole-profile,
+        // falling back to whichever container exists.)
+        let profile_media = config
+            .install_dir
+            .as_ref()
+            .and_then(|d| {
+                std::fs::read_to_string(std::path::Path::new(d).join(".porthole-profile")).ok()
+            })
+            .and_then(|c| c.lines().nth(2).map(|s| s.to_string()));
+        let plex_exists = statuses.contains_key("plex");
+        let jellyfin_exists = statuses.contains_key("jellyfin");
         for svc in SERVICES {
             if svc.id == "torbox" {
                 checks.push(Check {
@@ -623,6 +656,25 @@ impl DoctorState {
                 .get(svc.id)
                 .copied()
                 .unwrap_or(ServiceStatus::NotInstalled);
+            // Skip NotInstalled for: unselected media server, non-opted-in extras.
+            if status == ServiceStatus::NotInstalled {
+                let is_base = base_ids.contains(&svc.id);
+                let is_selected_media = match profile_media.as_deref() {
+                    Some("plex") => svc.id == "plex",
+                    Some("jellyfin") => svc.id == "jellyfin",
+                    _ => {
+                        // No record: whichever exists, or both if fresh.
+                        (svc.id == "plex" && plex_exists)
+                            || (svc.id == "jellyfin" && jellyfin_exists)
+                            || ((svc.id == "plex" || svc.id == "jellyfin")
+                                && !plex_exists
+                                && !jellyfin_exists)
+                    }
+                };
+                if !is_base && !is_selected_media {
+                    continue;
+                }
+            }
             match status {
                 ServiceStatus::Running => {
                     if docker::port_open(svc.port, 400) {
@@ -1034,6 +1086,7 @@ pub struct CareState {
     pub vpn_key: String,
     pub vpn_field: usize, // 0 = provider, 1 = key
     pub backend_idx: usize,
+    pub vpn_error: Option<String>,
     /// For destructive ops: first Enter arms, second Enter fires.
     pub confirm_armed: bool,
     pub logs: Vec<String>,
@@ -1044,6 +1097,11 @@ pub struct CareState {
 }
 
 impl CareState {
+    /// True when typing in the VPN key field (global shortcuts suppressed).
+    fn is_text_input(&self) -> bool {
+        matches!(self.view, CareView::VpnForm) && self.vpn_field == 1
+    }
+
     fn new() -> Self {
         Self {
             view: CareView::Main,
@@ -1055,6 +1113,7 @@ impl CareState {
             vpn_key: String::new(),
             vpn_field: 0,
             backend_idx: 0,
+            vpn_error: None,
             confirm_armed: false,
             logs: Vec::new(),
             done_message: String::new(),
@@ -1232,14 +1291,16 @@ impl CareState {
                 }
                 KeyCode::Char(c) if self.vpn_field == 1 => {
                     self.vpn_key.push(c);
+                    self.vpn_error = None;
                 }
                 KeyCode::Backspace if self.vpn_field == 1 => {
                     self.vpn_key.pop();
                 }
                 KeyCode::Enter => {
                     if self.vpn_key.trim().is_empty() {
-                        // Don't proceed without a key.
+                        self.vpn_error = Some("Paste your WireGuard key first.".to_string());
                     } else {
+                        self.vpn_error = None;
                         let provider = VPN_PROVIDERS[self.vpn_provider_idx].to_string();
                         self.pending_op =
                             Some(CareOp::VpnSetup(provider, self.vpn_key.trim().to_string()));
@@ -1658,28 +1719,34 @@ impl App {
             return;
         }
 
-        // Global keys.
-        match code {
-            KeyCode::Char('q') => {
-                self.should_quit = true;
-                return;
+        // Global keys — suppressed while typing in a wizard text field
+        // (otherwise typing 'q' quits, '1' switches screens, etc.).
+        // Same for the VPN key field in Care.
+        let in_text = (self.screen == Screen::Wizard && self.wizard.is_text_input())
+            || (self.screen == Screen::Care && self.care.is_text_input());
+        if !in_text {
+            match code {
+                KeyCode::Char('q') => {
+                    self.should_quit = true;
+                    return;
+                }
+                KeyCode::Char('1') => self.goto(Screen::Dashboard),
+                KeyCode::Char('2') => self.goto(Screen::Wizard),
+                KeyCode::Char('3') => self.goto(Screen::Integrations),
+                KeyCode::Char('4') => self.goto(Screen::Doctor),
+                KeyCode::Char('5') => self.goto(Screen::Care),
+                KeyCode::Char('6') => self.goto(Screen::Logs),
+                KeyCode::Char('?') => self.goto(Screen::Help),
+                KeyCode::Tab => {
+                    let i = Screen::ALL
+                        .iter()
+                        .position(|s| *s == self.screen)
+                        .unwrap_or(0);
+                    let next = Screen::ALL[(i + 1) % Screen::ALL.len()];
+                    self.goto(next);
+                }
+                _ => {}
             }
-            KeyCode::Char('1') => self.goto(Screen::Dashboard),
-            KeyCode::Char('2') => self.goto(Screen::Wizard),
-            KeyCode::Char('3') => self.goto(Screen::Integrations),
-            KeyCode::Char('4') => self.goto(Screen::Doctor),
-            KeyCode::Char('5') => self.goto(Screen::Care),
-            KeyCode::Char('6') => self.goto(Screen::Logs),
-            KeyCode::Char('?') => self.goto(Screen::Help),
-            KeyCode::Tab => {
-                let i = Screen::ALL
-                    .iter()
-                    .position(|s| *s == self.screen)
-                    .unwrap_or(0);
-                let next = Screen::ALL[(i + 1) % Screen::ALL.len()];
-                self.goto(next);
-            }
-            _ => {}
         }
 
         // Screen-local keys.

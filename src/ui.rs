@@ -1094,6 +1094,10 @@ fn render_care(f: &mut Frame, app: &App, area: Rect) {
                     ]),
                 ])),
                 ListItem::new(Line::from(vec![Span::styled(
+                    c.vpn_error.clone().unwrap_or_default(),
+                    Style::default().fg(Color::Red),
+                )])),
+                ListItem::new(Line::from(vec![Span::styled(
                     "↑↓ switch field · Enter continues · Esc cancels",
                     Style::default().fg(DIM),
                 )])),

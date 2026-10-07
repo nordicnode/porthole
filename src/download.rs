@@ -203,9 +203,12 @@ pub fn set_debrid_provider(
     let mut cfg: serde_json::Value = serde_json::from_str(&raw)
         .map_err(|_| anyhow::anyhow!("could not parse Decypharr config"))?;
     let entry: serde_json::Value = serde_json::from_str(&render_debrids(provider, api_key))
-        .expect("render_debrids is valid JSON");
+        .map_err(|_| anyhow::anyhow!("internal error: generated invalid JSON"))?;
     // render_debrids returns an array; take its single entry.
-    let entry = entry.as_array().and_then(|a| a.first().cloned()).unwrap();
+    let entry = entry
+        .as_array()
+        .and_then(|a| a.first().cloned())
+        .ok_or_else(|| anyhow::anyhow!("internal error: empty debrids array"))?;
     cfg["debrids"] = serde_json::Value::Array(vec![entry]);
     let out = serde_json::to_string_pretty(&cfg)
         .map_err(|_| anyhow::anyhow!("could not serialize Decypharr config"))?;
