@@ -806,6 +806,7 @@ impl DoctorState {
 #[derive(Clone)]
 pub enum CareOp {
     Backup,
+    ScheduledBackups,
     Restore(PathBuf),
     RegenConfigs,
     SmallDisk,
@@ -830,6 +831,7 @@ impl CareOp {
     pub fn title(&self) -> &'static str {
         match self {
             CareOp::Backup => "Back up now",
+            CareOp::ScheduledBackups => "Set up daily automatic backups",
             CareOp::Restore(_) => "Restore a backup",
             CareOp::RegenConfigs => "Regenerate configs",
             CareOp::SmallDisk => "Optimize for small disk",
@@ -854,6 +856,9 @@ impl CareOp {
     pub fn plain(&self) -> &'static str {
         match self {
             CareOp::Backup => "Save a snapshot of your configs. Do this before anything scary.",
+            CareOp::ScheduledBackups => {
+                "A daily systemd timer that backs up your configs automatically. Keeps the 7 newest."
+            }
             CareOp::Restore(_) => "Bring back a snapshot. Your fleet returns to exactly how it was.",
             CareOp::RegenConfigs => {
                 "Rewrite all config files with Porthole's native generator. Fixes corrupted configs; secrets are preserved."
@@ -879,6 +884,7 @@ impl CareOp {
             CareOp::VpnSetup(_, _) => {
                 "Enter your VPN login (PIA or Proton VPN). Porthole routes downloads through it with a kill switch."
             }
+
             CareOp::LocalClients => {
                 "Set permanent passwords on qBittorrent/SABnzbd and wire them into Sonarr/Radarr as download clients."
             }
@@ -916,6 +922,12 @@ impl CareOp {
                 format!("  • everything in {dir} except your media data"),
                 "to ~/.local/share/porthole/backups/ as a timestamped archive.".to_string(),
                 "Your media data isn't included — it's re-fetchable from the cloud.".to_string(),
+            ],
+            CareOp::ScheduledBackups => vec![
+                "Porthole will generate a daily systemd timer that:".to_string(),
+                "  • backs up your configs (excluding media data)".to_string(),
+                "  • keeps the 7 newest backups, deletes older ones".to_string(),
+                "You'll install it with sudo (instructions shown after).".to_string(),
             ],
             CareOp::Restore(p) => vec![
                 "Porthole will:".to_string(),
@@ -1042,6 +1054,7 @@ impl CareOp {
 
 pub(crate) const CARE_ACTIONS: &[fn() -> CareOp] = &[
     || CareOp::Backup,
+    || CareOp::ScheduledBackups,
     || CareOp::Restore(PathBuf::new()), // placeholder → backup picker
     || CareOp::RegenConfigs,
     || CareOp::SmallDisk,
@@ -1406,6 +1419,11 @@ fn run_care_op(
                 "Backup saved: {}",
                 dest.file_name().unwrap_or_default().to_string_lossy()
             ))
+        }
+        CareOp::ScheduledBackups => {
+            let d = dir()?;
+            crate::care::setup_scheduled_backups(std::path::Path::new(&d), &tx)?;
+            Ok("Daily backup timer generated — see the log for install steps.".to_string())
         }
         CareOp::Restore(p) => {
             let d = dir()?;

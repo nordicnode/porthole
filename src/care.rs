@@ -1126,6 +1126,62 @@ pub fn setup_upload_mover(install_dir: &Path, tx: &Sender<CareEvent>) -> Result<
     Ok(())
 }
 
+/// Set up a daily systemd timer for automatic backups.
+/// Generates the timer + service; user installs with sudo (same as upload mover).
+pub fn setup_scheduled_backups(install_dir: &Path, tx: &Sender<CareEvent>) -> Result<()> {
+    let log = |s: &str| {
+        let _ = tx.send(CareEvent::Log(s.to_string()));
+    };
+    // Find the porthole binary.
+    let exe = std::env::current_exe().context("locating the porthole binary")?;
+    // The backup command: porthole doesn't have a CLI backup mode yet,
+    // so we use a shell wrapper that calls the same tar logic.
+    // Actually — simpler: the timer runs a script that tars the install dir
+    // (excluding data/) with a timestamp, keeping the 7 newest.
+    let script = format!(
+        r#"#!/bin/bash
+# Porthole scheduled backup — generated, do not edit by hand.
+set -euo pipefail
+INSTALL="{install}"
+DEST="$HOME/.local/share/porthole/backups"
+mkdir -p "$DEST"
+TS=$(date +%Y%m%d-%H%M%S-%N)
+tar -czf "$DEST/porthole-backup-$TS.tar.gz" \
+    --exclude="$(basename "$INSTALL")/data" \
+    -C "$(dirname "$INSTALL")" "$(basename "$INSTALL")"
+# Keep the 7 newest, delete the rest.
+ls -t "$DEST"/porthole-backup-*.tar.gz 2>/dev/null | tail -n +8 | xargs -r rm --
+"#,
+        install = install_dir.display()
+    );
+    let script_path = install_dir.join("configs/porthole-backup.sh");
+    if let Some(p) = script_path.parent() {
+        std::fs::create_dir_all(p)?;
+    }
+    std::fs::write(&script_path, script)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755));
+    }
+
+    let timer = "[Unit]\nDescription=Porthole daily backup\n\n[Timer]\nOnCalendar=daily\nPersistent=true\n\n[Install]\nWantedBy=timers.target\n";
+    let svc = format!(
+        "[Unit]\nDescription=Porthole scheduled backup\n\n[Service]\nType=oneshot\nExecStart={}\n",
+        script_path.display()
+    );
+    std::fs::write(install_dir.join("configs/porthole-backup.timer"), timer)?;
+    std::fs::write(install_dir.join("configs/porthole-backup.service"), svc)?;
+
+    log("[ok] daily backup timer generated");
+    log("[in] to activate:");
+    log("  sudo cp <install>/configs/porthole-backup.* /etc/systemd/system/");
+    log("  sudo systemctl enable --now porthole-backup.timer");
+    log("[note] keeps the 7 newest backups, deletes older ones");
+    let _ = exe; // (reserved for a future --backup CLI mode)
+    Ok(())
+}
+
 pub fn wire_extras(install_dir: &Path, tx: &Sender<CareEvent>) -> Result<()> {
     let log = |s: &str| {
         let _ = tx.send(CareEvent::Log(s.to_string()));
