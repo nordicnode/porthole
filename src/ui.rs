@@ -95,7 +95,7 @@ pub fn render(f: &mut Frame, app: &App) {
         Screen::Doctor => render_doctor(f, app, root[1]),
         Screen::Care => render_care(f, app, root[1]),
         Screen::Logs => render_logs(f, app, root[1]),
-        Screen::Help => render_help(f, root[1]),
+        Screen::Help => render_help(f, app, root[1]),
     }
 
     // ── Footer: key hints + transient feedback ──
@@ -888,8 +888,13 @@ fn render_care(f: &mut Frame, app: &App, area: Rect) {
                     ]),
                 ])));
             }
-            let list = List::new(items).block(title_block("Care — backups, updates, uninstall"));
-            f.render_widget(list, area);
+            let list = List::new(items).block(title_block(
+                "Care — backups, updates, uninstall — ↑↓ to move",
+            ));
+            // Stateful rendering so the list scrolls to keep the selection visible.
+            let mut state = ratatui::widgets::ListState::default();
+            state.select(Some(c.selected));
+            f.render_stateful_widget(list, area, &mut state);
         }
         CareView::PickBackup => {
             let mut items: Vec<ListItem> = vec![ListItem::new(Line::from(vec![Span::styled(
@@ -1257,12 +1262,13 @@ fn render_logs(f: &mut Frame, app: &App, area: Rect) {
         .map(|l| Line::from(Span::styled(l.clone(), Style::default().fg(Color::Gray))))
         .collect();
     let para = Paragraph::new(Text::from(lines))
-        .block(title_block("Logs"))
-        .wrap(Wrap { trim: false });
+        .block(title_block("Logs — PgUp/PgDn to scroll"))
+        .wrap(Wrap { trim: false })
+        .scroll((app.logs_scroll, 0));
     f.render_widget(para, area);
 }
 
-fn render_help(f: &mut Frame, area: Rect) {
+fn render_help(f: &mut Frame, app: &App, area: Rect) {
     let mut text = Text::from(vec![
         Line::from(""),
         Line::from(vec![Span::styled(
@@ -1294,6 +1300,7 @@ fn render_help(f: &mut Frame, area: Rect) {
         Line::from(""),
         Line::from("  1–6 / Tab      switch views"),
         Line::from("  ↑ ↓            move in lists and forms"),
+        Line::from("  PgUp / PgDn    scroll long text (Help, Logs)"),
         Line::from("  type           fill in the setup form"),
         Line::from("  Space / ← →    switch Plex ↔ Jellyfin"),
         Line::from("  Enter          confirm / start / apply fix"),
@@ -1359,7 +1366,9 @@ fn render_help(f: &mut Frame, area: Rect) {
         "Built on the proven TorBox-Media-Server installer (55★).",
         Style::default().fg(DIM),
     )]));
-    let para = Paragraph::new(text).block(title_block("Help"));
+    let para = Paragraph::new(text)
+        .block(title_block("Help — PgUp/PgDn to scroll"))
+        .scroll((app.help_scroll, 0));
     f.render_widget(para, area);
 }
 

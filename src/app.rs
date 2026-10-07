@@ -1597,6 +1597,9 @@ pub struct App {
     /// Transient one-line feedback, cleared on the next keypress.
     pub flash: Option<String>,
     update_rx: Option<Receiver<Result<Option<crate::selfupdate::ReleaseInfo>, String>>>,
+    /// Scroll offsets for long views (Help, Logs). PageUp/PageDown adjust.
+    pub help_scroll: u16,
+    pub logs_scroll: u16,
 }
 
 impl App {
@@ -1616,6 +1619,8 @@ impl App {
             show_welcome,
             flash: None,
             update_rx: None,
+            help_scroll: 0,
+            logs_scroll: 0,
         };
         app.refresh_statuses();
         // Never phone home during tests.
@@ -1659,6 +1664,9 @@ impl App {
 
     fn goto(&mut self, screen: Screen) {
         self.screen = screen;
+        // Reset scroll when switching views.
+        self.help_scroll = 0;
+        self.logs_scroll = 0;
         if screen == Screen::Doctor {
             self.doctor.run(&self.config);
         }
@@ -1765,6 +1773,16 @@ impl App {
                     let next = Screen::ALL[(i + 1) % Screen::ALL.len()];
                     self.goto(next);
                 }
+                KeyCode::PageUp => match self.screen {
+                    Screen::Help => self.help_scroll = self.help_scroll.saturating_sub(10),
+                    Screen::Logs => self.logs_scroll = self.logs_scroll.saturating_sub(10),
+                    _ => {}
+                },
+                KeyCode::PageDown => match self.screen {
+                    Screen::Help => self.help_scroll = self.help_scroll.saturating_add(10),
+                    Screen::Logs => self.logs_scroll = self.logs_scroll.saturating_add(10),
+                    _ => {}
+                },
                 _ => {}
             }
         }
