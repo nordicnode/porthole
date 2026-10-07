@@ -10,7 +10,7 @@ use ratatui::{
 };
 
 use crate::{
-    app::{App, CheckStatus, Screen, WizardPhase},
+    app::{App, CareOp, CareView, CheckStatus, Screen, WizardPhase, CARE_ACTIONS},
     docker::ServiceStatus,
     provision::{StepStatus, STEPS},
     services::{INTEGRATIONS, SERVICES},
@@ -90,6 +90,7 @@ pub fn render(f: &mut Frame, app: &App) {
         Screen::Wizard => render_wizard(f, app, root[1]),
         Screen::Integrations => render_integrations(f, root[1]),
         Screen::Doctor => render_doctor(f, app, root[1]),
+        Screen::Care => render_care(f, app, root[1]),
         Screen::Logs => render_logs(f, app, root[1]),
         Screen::Help => render_help(f, root[1]),
     }
@@ -109,6 +110,7 @@ pub fn render(f: &mut Frame, app: &App) {
             ("R", "restart"),
         ]),
         Screen::Doctor => keys.extend([("d", "re-check"), ("f", "apply fix")]),
+        Screen::Care => keys.extend([("Esc", "back")]),
         _ => {}
     }
     let key_line = Line::from(
@@ -590,6 +592,183 @@ fn render_doctor(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(list, area);
 }
 
+fn render_care(f: &mut Frame, app: &App, area: Rect) {
+    let c = &app.care;
+    match c.view {
+        CareView::Main => {
+            let mut items: Vec<ListItem> = vec![
+                ListItem::new(Line::from(vec![Span::styled(
+                    "Look after your fleet: backups, updates, and a clean goodbye.",
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::ITALIC),
+                )])),
+                ListItem::new(Line::from("")),
+            ];
+            for (i, make_op) in CARE_ACTIONS.iter().enumerate() {
+                let op = make_op();
+                // Skip the restore placeholder's description duplication.
+                let selected = i == c.selected;
+                items.push(ListItem::new(Text::from(vec![
+                    Line::from(vec![
+                        Span::styled(
+                            if selected { "▸ " } else { "  " },
+                            Style::default().fg(ACCENT),
+                        ),
+                        Span::styled(
+                            op.title(),
+                            Style::default()
+                                .fg(Color::White)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                    ]),
+                    Line::from(vec![
+                        Span::raw("    "),
+                        Span::styled(op.plain(), Style::default().fg(Color::Gray)),
+                    ]),
+                ])));
+            }
+            let list = List::new(items).block(title_block("Care — backups, updates, uninstall"));
+            f.render_widget(list, area);
+        }
+        CareView::PickBackup => {
+            let mut items: Vec<ListItem> = vec![ListItem::new(Line::from(vec![Span::styled(
+                "Which snapshot should come back?",
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::ITALIC),
+            )]))];
+            if c.backups.is_empty() {
+                items.push(ListItem::new(Line::from(vec![Span::styled(
+                    "No backups yet — choose “Back up now” first.",
+                    Style::default().fg(WARM),
+                )])));
+            }
+            for (i, p) in c.backups.iter().enumerate() {
+                let selected = i == c.selected;
+                items.push(ListItem::new(Line::from(vec![
+                    Span::styled(
+                        if selected { "▸ " } else { "  " },
+                        Style::default().fg(ACCENT),
+                    ),
+                    Span::styled(
+                        p.file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .to_string(),
+                        Style::default().fg(if selected { Color::White } else { Color::Gray }),
+                    ),
+                ])));
+            }
+            let list = List::new(items).block(title_block("Pick a backup (Esc to go back)"));
+            f.render_widget(list, area);
+        }
+        CareView::Confirm => {
+            let mut lines: Vec<Line> = vec![Line::from(vec![Span::styled(
+                "Please read this before you say yes:",
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            )])];
+            lines.push(Line::from(""));
+            if let Some(op) = &c.pending_op {
+                for l in op.confirm_lines(&app.config.install_dir) {
+                    lines.push(Line::from(vec![Span::styled(
+                        l,
+                        Style::default().fg(Color::Gray),
+                    )]));
+                }
+                lines.push(Line::from(""));
+                let is_uninstall = matches!(op, CareOp::Uninstall);
+                if is_uninstall && !c.confirm_armed {
+                    lines.push(Line::from(vec![
+                        Span::styled(
+                            "[Enter]",
+                            Style::default().fg(WARM).add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(
+                            " yes, I understand — ask me once more",
+                            Style::default().fg(DIM),
+                        ),
+                    ]));
+                } else if is_uninstall {
+                    lines.push(Line::from(vec![
+                        Span::styled(
+                            "[Enter]",
+                            Style::default().fg(BAD).add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(
+                            " YES, remove everything now",
+                            Style::default().fg(BAD).add_modifier(Modifier::BOLD),
+                        ),
+                    ]));
+                } else {
+                    lines.push(Line::from(vec![
+                        Span::styled(
+                            "[Enter]",
+                            Style::default().fg(GOOD).add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(" do it      ", Style::default().fg(DIM)),
+                    ]));
+                }
+                lines.push(Line::from(vec![
+                    Span::styled("[Esc]", Style::default().fg(ACCENT)),
+                    Span::styled(" back", Style::default().fg(DIM)),
+                ]));
+            }
+            let para = Paragraph::new(Text::from(lines))
+                .block(title_block("Confirm — no surprises"))
+                .wrap(Wrap { trim: false });
+            f.render_widget(para, area);
+        }
+        CareView::Working => {
+            let log_lines: Vec<Line> = c
+                .logs
+                .iter()
+                .rev()
+                .take(40)
+                .rev()
+                .map(|l| {
+                    let style = if l.contains("[ok]") {
+                        Style::default().fg(GOOD)
+                    } else if l.contains("[fail]") {
+                        Style::default().fg(BAD)
+                    } else if l.contains("[warn]") {
+                        Style::default().fg(WARM)
+                    } else if l.starts_with("──") {
+                        Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::Gray)
+                    };
+                    Line::from(Span::styled(l.clone(), style))
+                })
+                .collect();
+            let block_title = format!("Working {} — please wait", spinner(c.tick));
+            let log = Paragraph::new(Text::from(log_lines)).block(title_block(&block_title));
+            f.render_widget(log, area);
+        }
+        CareView::Done => {
+            let color = if c.done_ok { GOOD } else { BAD };
+            let glyph = if c.done_ok { "✓" } else { "✖" };
+            let para = Paragraph::new(Text::from(vec![
+                Line::from(""),
+                Line::from(vec![Span::styled(
+                    format!("{glyph} {}", c.done_message),
+                    Style::default().fg(color).add_modifier(Modifier::BOLD),
+                )]),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("[Enter]", Style::default().fg(ACCENT)),
+                    Span::styled(" back to Care", Style::default().fg(DIM)),
+                ]),
+            ]))
+            .block(title_block("Done"))
+            .wrap(Wrap { trim: false });
+            f.render_widget(para, area);
+        }
+    }
+}
+
 fn render_logs(f: &mut Frame, app: &App, area: Rect) {
     let lines: Vec<Line> = app
         .wizard
@@ -633,11 +812,12 @@ fn render_help(f: &mut Frame, area: Rect) {
             Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
         )]),
         Line::from(""),
-        Line::from("  1–5 / Tab      switch views"),
+        Line::from("  1–6 / Tab      switch views"),
         Line::from("  ↑ ↓            move in lists and forms"),
         Line::from("  type           fill in the setup form"),
         Line::from("  Space / ← →    switch Plex ↔ Jellyfin"),
         Line::from("  Enter          confirm / start / apply fix"),
+        Line::from("  Esc            back out of a choice"),
         Line::from("  s / x / R      start / stop / restart service (Fleet view)"),
         Line::from("  r              refresh fleet status (Fleet view)"),
         Line::from("  d              re-run Doctor checks"),

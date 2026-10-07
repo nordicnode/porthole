@@ -39,7 +39,8 @@ you can see (and trust) what was connected.
 | **Setup** (`2`) | Guided wizard: 3 questions → dry-run plan → real provisioning with live logs |
 | **Wiring** (`3`) | The integration map — every connection Porthole makes, in plain words |
 | **Doctor** (`4`) | Fleet health checks in plain language, with one-key fixes |
-| **Logs** (`5`) | Everything Porthole is doing, streamed live |
+| **Care** (`5`) | Backups, one-key updates with automatic rollback, config regeneration, clean uninstall |
+| **Logs** (`6`) | Everything Porthole is doing, streamed live |
 | **Help** (`?`) | The one-paragraph version of all of this |
 
 ## Quick start
@@ -54,9 +55,11 @@ Works over SSH — it's a TUI, so it runs wherever your server lives.
 
 ## Project status
 
-**Phase 2 — fleet management + Doctor** (current): start/stop/restart services
-from the Fleet view, and a Doctor view that checks every service's health and
-explains problems in plain language — with one-key fixes where they're honest.
+**Phase 3 — native provisioning + care** (current): Porthole generates all
+config files itself (`.env`, Decypharr config, the three *arr configs, systemd
+unit) — byte-identical to the installer's output, verified against the real
+shell functions. The Care view handles backups, restore, one-key updates with
+automatic rollback, native config regeneration, and clean uninstall.
 See [ROADMAP.md](ROADMAP.md) for what's next.
 
 ## License

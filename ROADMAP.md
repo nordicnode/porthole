@@ -53,11 +53,24 @@ fleet up, it keeps it healthy — still with no expert knowledge required.
 
 ## Phase 3 — Native provisioning + care
 
-- [ ] Port config generation to Rust (compose file, `.env`, arr configs)
-      so Porthole no longer shells out for the deterministic parts
-- [ ] Update detection: new image versions with one-key safe updates + rollback
-- [ ] Backup/restore of the whole configuration
-- [ ] Uninstall that cleanly removes everything (mirrors `uninstall.sh`)
+- [x] Port config generation to Rust (`.env`, Decypharr `config.json`, the three
+      *arr `config.xml` files, systemd unit) — **byte-identical** to the
+      installer's output, verified by diffing against the real shell functions
+      with identical inputs. Secrets are generated with a real CSPRNG
+      (`getrandom`) and preserved from the existing `.env` on rewrite.
+- [x] Update detection with one-key safe updates + rollback: `docker compose
+      pull` diffed per-service, then backup → tag current images → pull →
+      restart → 90s health check → automatic rollback (re-tag + config restore)
+      on any failure.
+- [x] Backup/restore of the whole configuration (timestamped tarballs in
+      `~/.local/share/porthole/backups/`, media data excluded).
+- [x] Uninstall that cleanly removes everything (mirrors `uninstall.sh`),
+      with a double confirmation.
+- [x] Care view (`5`): plain-language confirmations for every destructive
+      action, live progress logs, backup picker for restore.
+- [ ] The Setup wizard still orchestrates `setup.sh` for the initial install
+      (it also does API-based *arr wiring, which is not deterministic and not
+      yet ported) — native generation is used by Care's "Regenerate configs".
 
 ## Non-goals
 

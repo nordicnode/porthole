@@ -2,6 +2,7 @@
 //! input handling.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver};
 
 use crossterm::event::KeyCode;
@@ -17,16 +18,18 @@ pub enum Screen {
     Wizard,
     Integrations,
     Doctor,
+    Care,
     Logs,
     Help,
 }
 
 impl Screen {
-    pub const ALL: [Screen; 6] = [
+    pub const ALL: [Screen; 7] = [
         Screen::Dashboard,
         Screen::Wizard,
         Screen::Integrations,
         Screen::Doctor,
+        Screen::Care,
         Screen::Logs,
         Screen::Help,
     ];
@@ -37,6 +40,7 @@ impl Screen {
             Screen::Wizard => "Setup",
             Screen::Integrations => "Wiring",
             Screen::Doctor => "Doctor",
+            Screen::Care => "Care",
             Screen::Logs => "Logs",
             Screen::Help => "Help",
         }
@@ -464,6 +468,330 @@ impl DoctorState {
     }
 }
 
+// ─────────────────────────── Care ───────────────────────────
+
+/// A care action. Cloneable so confirmations can carry the exact op.
+#[derive(Clone)]
+pub enum CareOp {
+    Backup,
+    Restore(PathBuf),
+    RegenConfigs,
+    CheckUpdates,
+    UpdateFleet,
+    Uninstall,
+}
+
+impl CareOp {
+    pub fn title(&self) -> &'static str {
+        match self {
+            CareOp::Backup => "Back up now",
+            CareOp::Restore(_) => "Restore a backup",
+            CareOp::RegenConfigs => "Regenerate configs",
+            CareOp::CheckUpdates => "Check for updates",
+            CareOp::UpdateFleet => "Update fleet",
+            CareOp::Uninstall => "Uninstall fleet",
+        }
+    }
+
+    pub fn plain(&self) -> &'static str {
+        match self {
+            CareOp::Backup => "Save a snapshot of your configs. Do this before anything scary.",
+            CareOp::Restore(_) => "Bring back a snapshot. Your fleet returns to exactly how it was.",
+            CareOp::RegenConfigs => {
+                "Rewrite all config files with Porthole's native generator. Fixes corrupted configs; secrets are preserved."
+            }
+            CareOp::CheckUpdates => {
+                "See if any service has a new version. Downloads, but changes nothing."
+            }
+            CareOp::UpdateFleet => {
+                "Back up, update everything, check health, roll back automatically if it breaks."
+            }
+            CareOp::Uninstall => "Remove everything Porthole installed. The point of no return.",
+        }
+    }
+
+    /// What the confirmation screen tells the user, in plain language.
+    pub fn confirm_lines(&self, install_dir: &Option<String>) -> Vec<String> {
+        let dir = install_dir
+            .clone()
+            .unwrap_or_else(|| "(not set)".to_string());
+        match self {
+            CareOp::Backup => vec![
+                "Porthole will save:".to_string(),
+                format!("  • everything in {dir} except your media data"),
+                "to ~/.local/share/porthole/backups/ as a timestamped archive.".to_string(),
+                "Your media data isn't included — it's re-fetchable from the cloud.".to_string(),
+            ],
+            CareOp::Restore(p) => vec![
+                "Porthole will:".to_string(),
+                "  • stop your fleet".to_string(),
+                format!(
+                    "  • replace your configs with the backup '{}'",
+                    p.file_name().unwrap_or_default().to_string_lossy()
+                ),
+                "Your media data is untouched. Start the fleet again from the Fleet view."
+                    .to_string(),
+            ],
+            CareOp::RegenConfigs => vec![
+                "Porthole will:".to_string(),
+                "  • take a backup first".to_string(),
+                "  • rewrite .env, the Decypharr config and the three *arr configs".to_string(),
+                "  • keep your existing API keys and passwords".to_string(),
+            ],
+            CareOp::CheckUpdates => vec![
+                "Porthole will download the latest images and tell you what's new.".to_string(),
+                "Nothing restarts. Nothing changes.".to_string(),
+            ],
+            CareOp::UpdateFleet => vec![
+                "Porthole will:".to_string(),
+                "  1. back up your configs".to_string(),
+                "  2. download updates".to_string(),
+                "  3. restart everything".to_string(),
+                "  4. check every service is healthy".to_string(),
+                "  5. roll back automatically if anything breaks".to_string(),
+            ],
+            CareOp::Uninstall => {
+                let mut lines = vec!["Porthole will remove:".to_string()];
+                lines.extend(crate::care::uninstall_plan(std::path::Path::new(&dir)));
+                lines.push("This cannot be undone.".to_string());
+                lines.push("Your cloud media (TorBox) is untouched.".to_string());
+                lines
+            }
+        }
+    }
+}
+
+pub(crate) const CARE_ACTIONS: &[fn() -> CareOp] = &[
+    || CareOp::Backup,
+    || CareOp::Restore(PathBuf::new()), // placeholder → backup picker
+    || CareOp::RegenConfigs,
+    || CareOp::CheckUpdates,
+    || CareOp::UpdateFleet,
+    || CareOp::Uninstall,
+];
+
+#[derive(PartialEq, Eq)]
+pub enum CareView {
+    Main,
+    PickBackup,
+    Confirm,
+    Working,
+    Done,
+}
+
+pub struct CareState {
+    pub view: CareView,
+    pub selected: usize,
+    pub backups: Vec<PathBuf>,
+    pub pending_op: Option<CareOp>,
+    /// For destructive ops: first Enter arms, second Enter fires.
+    pub confirm_armed: bool,
+    pub logs: Vec<String>,
+    pub done_message: String,
+    pub done_ok: bool,
+    pub tick: u64,
+    rx: Option<mpsc::Receiver<crate::care::CareEvent>>,
+}
+
+impl CareState {
+    fn new() -> Self {
+        Self {
+            view: CareView::Main,
+            selected: 0,
+            backups: Vec::new(),
+            pending_op: None,
+            confirm_armed: false,
+            logs: Vec::new(),
+            done_message: String::new(),
+            done_ok: false,
+            tick: 0,
+            rx: None,
+        }
+    }
+
+    fn refresh_backups(&mut self) {
+        self.backups = crate::care::list_backups();
+    }
+
+    fn start_op(&mut self, op: CareOp, install_dir: Option<String>) {
+        self.logs.clear();
+        self.logs.push(format!("── {} ──", op.title()));
+        let (tx, rx) = mpsc::channel();
+        self.rx = Some(rx);
+        std::thread::spawn(move || {
+            run_care_op(op, install_dir, tx);
+        });
+        self.view = CareView::Working;
+    }
+
+    fn push_log(&mut self, line: String) {
+        self.logs.push(line);
+        if self.logs.len() > 300 {
+            let drain = self.logs.len() - 300;
+            self.logs.drain(..drain);
+        }
+    }
+
+    fn drain(&mut self) {
+        let events: Vec<crate::care::CareEvent> = match &self.rx {
+            Some(rx) => rx.try_iter().collect(),
+            None => Vec::new(),
+        };
+        for ev in events {
+            match ev {
+                crate::care::CareEvent::Log(line) => self.push_log(line),
+                crate::care::CareEvent::Finished(Ok(msg)) => {
+                    self.rx = None;
+                    self.done_message = msg;
+                    self.done_ok = true;
+                    self.view = CareView::Done;
+                    self.refresh_backups();
+                }
+                crate::care::CareEvent::Finished(Err(msg)) => {
+                    self.rx = None;
+                    self.done_message = msg;
+                    self.done_ok = false;
+                    self.view = CareView::Done;
+                    self.refresh_backups();
+                }
+            }
+        }
+    }
+
+    fn on_key(&mut self, code: KeyCode, install_dir: &Option<String>) {
+        match self.view {
+            CareView::Main => match code {
+                KeyCode::Up => self.selected = self.selected.saturating_sub(1),
+                KeyCode::Down => self.selected = (self.selected + 1).min(CARE_ACTIONS.len() - 1),
+                KeyCode::Enter => {
+                    let op = CARE_ACTIONS[self.selected]();
+                    self.confirm_armed = false;
+                    match op {
+                        CareOp::Restore(_) => {
+                            self.refresh_backups();
+                            self.selected = 0;
+                            self.view = CareView::PickBackup;
+                        }
+                        _ => {
+                            self.pending_op = Some(op);
+                            self.view = CareView::Confirm;
+                        }
+                    }
+                }
+                _ => {}
+            },
+            CareView::PickBackup => match code {
+                KeyCode::Up => self.selected = self.selected.saturating_sub(1),
+                KeyCode::Down => {
+                    self.selected = (self.selected + 1).min(self.backups.len().saturating_sub(1))
+                }
+                KeyCode::Enter => {
+                    if let Some(p) = self.backups.get(self.selected).cloned() {
+                        self.pending_op = Some(CareOp::Restore(p));
+                        self.confirm_armed = false;
+                        self.view = CareView::Confirm;
+                    }
+                }
+                KeyCode::Esc => {
+                    self.selected = 1;
+                    self.view = CareView::Main;
+                }
+                _ => {}
+            },
+            CareView::Confirm => match code {
+                KeyCode::Enter => {
+                    if let Some(op) = self.pending_op.clone() {
+                        let needs_double = matches!(op, CareOp::Uninstall);
+                        if needs_double && !self.confirm_armed {
+                            // First yes arms it; the screen now asks once more.
+                            self.confirm_armed = true;
+                            return;
+                        }
+                        self.confirm_armed = false;
+                        self.start_op(op, install_dir.clone());
+                    }
+                }
+                KeyCode::Esc => {
+                    self.pending_op = None;
+                    self.confirm_armed = false;
+                    self.view = CareView::Main;
+                }
+                _ => {}
+            },
+            CareView::Working => {}
+            CareView::Done => {
+                if code == KeyCode::Enter || code == KeyCode::Esc {
+                    self.view = CareView::Main;
+                    self.selected = 0;
+                }
+            }
+        }
+    }
+
+    fn tick(&mut self) {
+        self.tick += 1;
+        self.drain();
+    }
+}
+
+/// Run a care op in a worker thread. install_dir comes from the app config.
+fn run_care_op(
+    op: CareOp,
+    install_dir: Option<String>,
+    tx: std::sync::mpsc::Sender<crate::care::CareEvent>,
+) {
+    let dir = || -> anyhow::Result<String> {
+        install_dir.clone().ok_or_else(|| {
+            anyhow::anyhow!(
+                "Porthole doesn't know where your fleet lives yet — run the Setup wizard once."
+            )
+        })
+    };
+    let result: anyhow::Result<String> = (|| match op {
+        CareOp::Backup => {
+            let d = dir()?;
+            let dest = crate::care::create_backup(std::path::Path::new(&d))?;
+            Ok(format!(
+                "Backup saved: {}",
+                dest.file_name().unwrap_or_default().to_string_lossy()
+            ))
+        }
+        CareOp::Restore(p) => {
+            let d = dir()?;
+            crate::care::restore_backup(&p, std::path::Path::new(&d))?;
+            Ok("Backup restored. Start your fleet again from the Fleet view.".to_string())
+        }
+        CareOp::RegenConfigs => {
+            let d = dir()?;
+            crate::care::regenerate_configs(std::path::Path::new(&d), &tx)?;
+            Ok("Configs rewritten natively — your secrets were preserved.".to_string())
+        }
+        CareOp::CheckUpdates => {
+            let d = dir()?;
+            let updates = crate::care::check_updates(std::path::Path::new(&d), &tx)?;
+            Ok(if updates.is_empty() {
+                "Everything is already up to date.".to_string()
+            } else {
+                let names: Vec<_> = updates.iter().map(|u| u.service.clone()).collect();
+                format!("Updates available for: {}", names.join(", "))
+            })
+        }
+        CareOp::UpdateFleet => {
+            let d = dir()?;
+            crate::care::update_fleet(std::path::Path::new(&d), &tx)?;
+            Ok("Fleet updated — every service is healthy.".to_string())
+        }
+        CareOp::Uninstall => {
+            let d = dir()?;
+            crate::care::uninstall(std::path::Path::new(&d), &tx)?;
+            Ok("Fleet uninstalled. Thanks for sailing with Porthole.".to_string())
+        }
+    })();
+    let _ = tx.send(crate::care::CareEvent::Finished(
+        result.map_err(|e| format!("{e:#}")),
+    ));
+}
+
 // ─────────────────────────── App ───────────────────────────
 
 pub struct App {
@@ -475,6 +803,7 @@ pub struct App {
     pub config: Config,
     pub wizard: WizardState,
     pub doctor: DoctorState,
+    pub care: CareState,
     /// Transient one-line feedback, cleared on the next keypress.
     pub flash: Option<String>,
 }
@@ -490,6 +819,7 @@ impl App {
             config: config::load(),
             wizard: WizardState::new(),
             doctor: DoctorState::new(),
+            care: CareState::new(),
             flash: None,
         };
         app.refresh_statuses();
@@ -505,6 +835,14 @@ impl App {
         self.screen = screen;
         if screen == Screen::Doctor {
             self.doctor.run(&self.config);
+        }
+        if screen == Screen::Care {
+            self.care.refresh_backups();
+            // Reset to a clean slate each visit.
+            if self.care.view != CareView::Working {
+                self.care.view = CareView::Main;
+                self.care.selected = 0;
+            }
         }
         if screen == Screen::Dashboard {
             self.refresh_statuses();
@@ -546,6 +884,7 @@ impl App {
                 }
             }
         }
+        self.care.tick();
     }
 
     pub fn on_key(&mut self, code: KeyCode) {
@@ -561,7 +900,8 @@ impl App {
             KeyCode::Char('2') => self.goto(Screen::Wizard),
             KeyCode::Char('3') => self.goto(Screen::Integrations),
             KeyCode::Char('4') => self.goto(Screen::Doctor),
-            KeyCode::Char('5') => self.goto(Screen::Logs),
+            KeyCode::Char('5') => self.goto(Screen::Care),
+            KeyCode::Char('6') => self.goto(Screen::Logs),
             KeyCode::Char('?') => self.goto(Screen::Help),
             KeyCode::Tab => {
                 let i = Screen::ALL
@@ -603,6 +943,10 @@ impl App {
                     self.flash = Some(msg);
                     self.refresh_statuses();
                 }
+            }
+            Screen::Care => {
+                let install_dir = self.config.install_dir.clone();
+                self.care.on_key(code, &install_dir);
             }
             _ => {}
         }
