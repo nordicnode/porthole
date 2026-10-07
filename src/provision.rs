@@ -294,39 +294,23 @@ pub fn run_provision(prefs: Preferences, tx: Sender<ProvEvent>) {
         ),
     );
 
-    // Write the extras override BEFORE setup.sh runs `docker compose up`
-    // (the installer's compose wrapper auto-discovers it).
+    // Write the unified override (extras + download clients) BEFORE setup.sh
+    // runs `docker compose up` (the installer's compose wrapper auto-discovers it).
+    // Single valid YAML — never append fragments.
     let install = std::path::Path::new(&prefs.install_dir);
-    if let Err(e) = crate::extras::write_override(install, &prefs.extras) {
-        log(&format!("[warn] could not write extras override: {e:#}"));
+    if let Err(e) = crate::extras::write_full_override(install, &prefs.extras, &prefs.fleet_profile)
+    {
+        log(&format!("[warn] could not write override: {e:#}"));
+    } else if prefs.fleet_profile.needs_local_clients() {
+        log("[ok] download clients (gluetun + qBittorrent + SABnzbd) queued");
     }
     if let Err(e) = crate::extras::ensure_data_dirs(install, &prefs.extras) {
         log(&format!("[warn] could not create extras data dirs: {e:#}"));
     }
-
-    // Write the download-clients override BEFORE setup.sh runs
-    // `docker compose up` (same auto-discovery).
-    if prefs.fleet_profile.needs_local_clients() {
-        let dl = crate::download::render_download_override();
-        let dest = install.join("docker-compose.override.yml");
-        let mut merged = String::new();
-        if dest.exists() {
-            merged = std::fs::read_to_string(&dest).unwrap_or_default();
-            if !merged.ends_with('\n') {
-                merged.push('\n');
-            }
-        }
-        merged.push_str(&dl);
-        if let Err(e) = std::fs::write(&dest, merged) {
-            log(&format!("[warn] could not write download override: {e:#}"));
-        } else {
-            log("[ok] download clients (gluetun + qBittorrent + SABnzbd) queued");
-        }
-        if prefs.fleet_profile == crate::download::FleetProfile::Local
-            || prefs.fleet_profile == crate::download::FleetProfile::Hybrid
-        {
-            log("[note] Self-downloaded needs a VPN login — add it in Care → Set up VPN for downloads");
-        }
+    if prefs.fleet_profile == crate::download::FleetProfile::Local
+        || prefs.fleet_profile == crate::download::FleetProfile::Hybrid
+    {
+        log("[note] Self-downloaded needs a VPN login — add it in Care → Set up VPN for downloads");
     }
 
     // ── Step 0: toolbox ──

@@ -1474,7 +1474,9 @@ fn run_care_op(
         CareOp::Extras(selection) => {
             let d = dir()?;
             let install = std::path::Path::new(&d);
-            crate::extras::write_override(install, &selection)?;
+            // Preserve the download profile — write the FULL override.
+            let profile = crate::download::read_fleet_profile(install);
+            crate::extras::write_full_override(install, &selection, &profile)?;
             crate::extras::ensure_data_dirs(install, &selection)?;
             // (Re)start the fleet so compose picks up the override change.
             // Stopped extras are removed; new ones are pulled and started.
