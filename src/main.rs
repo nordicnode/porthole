@@ -10,6 +10,7 @@ mod config;
 mod docker;
 mod generate;
 mod provision;
+mod selfupdate;
 mod services;
 mod ui;
 
@@ -27,6 +28,12 @@ use ratatui::{backend::Backend, backend::CrosstermBackend, Terminal};
 use app::App;
 
 fn main() -> Result<()> {
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--version" || a == "-V") {
+        println!("porthole {}", selfupdate::CURRENT_VERSION);
+        return Ok(());
+    }
+
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;

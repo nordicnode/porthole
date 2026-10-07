@@ -72,6 +72,18 @@ fleet up, it keeps it healthy — still with no expert knowledge required.
       (it also does API-based *arr wiring, which is not deterministic and not
       yet ported) — native generation is used by Care's "Regenerate configs".
 
+## Phase 4 — Polish & packaging
+
+- [x] `porthole --version`, version shown in the header bar
+- [x] First-run welcome overlay: what Porthole is, in two paragraphs —
+      `Enter` starts the Setup wizard, `Esc` looks around first
+- [x] Self-update: checks GitHub releases at most once a day (background,
+      silent on failure), Care view can install with checksum verification;
+      refuses dev builds (`target/`) honestly
+- [x] Release CI: pushing tag `vX.Y.Z` (matching Cargo.toml) builds the
+      release binary, packages `porthole-x86_64-linux.tar.gz` + SHA256SUMS,
+      and publishes a GitHub release
+
 ## Non-goals
 
 - A GUI. The TUI works over SSH, which is where servers live. A web dashboard

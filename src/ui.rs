@@ -2,10 +2,10 @@
 //! step is described the way you'd explain it to a friend.
 
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, List, ListItem, Paragraph, Tabs, Wrap},
+    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Tabs, Wrap},
     Frame,
 };
 
@@ -57,7 +57,10 @@ pub fn render(f: &mut Frame, app: &App) {
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
-            "  — your self-hosted media fleet, through one window",
+            format!(
+                " v{}  — your self-hosted media fleet, through one window",
+                crate::selfupdate::CURRENT_VERSION
+            ),
             Style::default().fg(DIM),
         ),
     ]));
@@ -139,6 +142,90 @@ pub fn render(f: &mut Frame, app: &App) {
             .border_style(Style::default().fg(DIM)),
     );
     f.render_widget(footer, root[2]);
+
+    if app.show_welcome {
+        render_welcome(f, f.area());
+    }
+}
+
+/// Centered rectangle taking `w` x `h` of the area (percentages).
+fn centered_rect(w: u16, h: u16, area: Rect) -> Rect {
+    let vert = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - h) / 2),
+            Constraint::Percentage(h),
+            Constraint::Percentage((100 - h) / 2),
+        ])
+        .split(area);
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - w) / 2),
+            Constraint::Percentage(w),
+            Constraint::Percentage((100 - w) / 2),
+        ])
+        .split(vert[1])[1]
+}
+
+fn render_welcome(f: &mut Frame, area: Rect) {
+    let popup = centered_rect(70, 55, area);
+    f.render_widget(Clear, popup);
+    let text = Text::from(vec![
+        Line::from(""),
+        Line::from(vec![Span::styled(
+            "⛵  Welcome to Porthole",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        )]),
+        Line::from(""),
+        Line::from(vec![Span::styled(
+            "Your whole media fleet — TorBox, the *arrs, Seerr, and Plex or",
+            Style::default().fg(Color::Gray),
+        )]),
+        Line::from(vec![Span::styled(
+            "Jellyfin — installed and wired together, with no expert knowledge",
+            Style::default().fg(Color::Gray),
+        )]),
+        Line::from(vec![Span::styled(
+            "needed from you.",
+            Style::default().fg(Color::Gray),
+        )]),
+        Line::from(""),
+        Line::from(vec![Span::styled(
+            "Porthole doesn't just install apps — it introduces them to each",
+            Style::default().fg(Color::Gray),
+        )]),
+        Line::from(vec![Span::styled(
+            "other, then looks after them: health checks, backups, and safe",
+            Style::default().fg(Color::Gray),
+        )]),
+        Line::from(vec![Span::styled(
+            "one-key updates with automatic rollback.",
+            Style::default().fg(Color::Gray),
+        )]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(
+                "[Enter]",
+                Style::default().fg(GOOD).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" set up my fleet      ", Style::default().fg(DIM)),
+            Span::styled("[Esc]", Style::default().fg(ACCENT)),
+            Span::styled(" look around first", Style::default().fg(DIM)),
+        ]),
+    ]);
+    let para = Paragraph::new(text)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(ACCENT))
+                .title(" Ahoy "),
+        )
+        .alignment(Alignment::Center)
+        .wrap(Wrap { trim: false });
+    f.render_widget(para, popup);
 }
 
 fn status_span(status: ServiceStatus) -> Span<'static> {
@@ -832,4 +919,51 @@ fn render_help(f: &mut Frame, area: Rect) {
     ]);
     let para = Paragraph::new(text).block(title_block("Help"));
     f.render_widget(para, area);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::{backend::TestBackend, Terminal};
+
+    fn screen_text(app: &App, w: u16, h: u16) -> String {
+        let backend = TestBackend::new(w, h);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| render(f, app)).unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect()
+    }
+
+    #[test]
+    fn welcome_overlay_renders_on_first_run() {
+        let mut app = App::new();
+        app.show_welcome = true;
+        let text = screen_text(&app, 100, 40);
+        assert!(text.contains("Welcome to Porthole"));
+        assert!(text.contains("set up my fleet"));
+        assert!(text.contains("look around first"));
+    }
+
+    #[test]
+    fn welcome_dismiss_goes_to_setup_or_stays() {
+        let mut app = App::new();
+        app.show_welcome = true;
+        // Shield the test from touching the real config file.
+        app.config.onboarded = true;
+        app.on_key(crossterm::event::KeyCode::Enter);
+        assert!(!app.show_welcome);
+        assert_eq!(app.screen, Screen::Wizard);
+    }
+
+    #[test]
+    fn header_shows_version() {
+        let app = App::new();
+        let text = screen_text(&app, 100, 40);
+        assert!(text.contains(&format!("v{}", crate::selfupdate::CURRENT_VERSION)));
+    }
 }

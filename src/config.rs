@@ -10,6 +10,12 @@ pub struct Config {
     /// Where the stack lives (docker-compose.yml, .env, configs).
     /// Saved by the Setup wizard on success.
     pub install_dir: Option<String>,
+    /// Whether the first-run welcome has been shown.
+    #[serde(default)]
+    pub onboarded: bool,
+    /// Epoch seconds of the last self-update check.
+    #[serde(default)]
+    pub last_update_check: Option<u64>,
 }
 
 pub fn config_path() -> PathBuf {
@@ -41,10 +47,16 @@ mod tests {
     fn config_round_trips() {
         let cfg = Config {
             install_dir: Some("/opt/fleet".to_string()),
+            onboarded: true,
+            last_update_check: Some(123),
         };
         let json = serde_json::to_string(&cfg).unwrap();
         let back: Config = serde_json::from_str(&json).unwrap();
         assert_eq!(cfg, back);
         assert_eq!(Config::default().install_dir, None);
+        // Old configs without the new fields still load.
+        let old: Config = serde_json::from_str(r#"{"install_dir":null}"#).unwrap();
+        assert!(!old.onboarded);
+        assert_eq!(old.last_update_check, None);
     }
 }

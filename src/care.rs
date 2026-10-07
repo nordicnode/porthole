@@ -494,6 +494,8 @@ pub fn regenerate_configs(install_dir: &Path, tx: &Sender<CareEvent>) -> Result<
 pub enum CareEvent {
     Log(String),
     Finished(Result<String, String>),
+    /// A Porthole update was found — the UI should ask before installing.
+    UpdateAvailable(crate::selfupdate::ReleaseInfo),
 }
 
 #[cfg(test)]

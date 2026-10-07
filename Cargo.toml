@@ -1,6 +1,6 @@
 [package]
 name = "porthole"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Your self-hosted media fleet through one window — automated setup and seamless integration for TorBox, Plex, Jellyfin and the *arr apps."
 license = "MIT"

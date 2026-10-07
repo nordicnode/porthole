@@ -39,7 +39,7 @@ you can see (and trust) what was connected.
 | **Setup** (`2`) | Guided wizard: 3 questions → dry-run plan → real provisioning with live logs |
 | **Wiring** (`3`) | The integration map — every connection Porthole makes, in plain words |
 | **Doctor** (`4`) | Fleet health checks in plain language, with one-key fixes |
-| **Care** (`5`) | Backups, one-key updates with automatic rollback, config regeneration, clean uninstall |
+| **Care** (`5`) | Backups, one-key updates with automatic rollback, config regeneration, clean uninstall, Porthole self-updates |
 | **Logs** (`6`) | Everything Porthole is doing, streamed live |
 | **Help** (`?`) | The one-paragraph version of all of this |
 
@@ -49,18 +49,29 @@ you can see (and trust) what was connected.
 cargo run --release
 ```
 
+Or grab the latest release (a single 2MB binary, no dependencies):
+
+```bash
+curl -fsSL -o porthole.tar.gz \
+  https://github.com/nordicnode/porthole/releases/latest/download/porthole-x86_64-linux.tar.gz
+tar xzf porthole.tar.gz
+./porthole
+```
+
+Porthole checks for its own updates once a day and can install them from
+the Care view (`5` → *Check for Porthole updates*) — checksum-verified, no
+package manager needed.
+
 Keys: `Tab` switch views · `↑↓` move · `Enter` start setup · `?` help · `q` quit.
 
 Works over SSH — it's a TUI, so it runs wherever your server lives.
 
 ## Project status
 
-**Phase 3 — native provisioning + care** (current): Porthole generates all
-config files itself (`.env`, Decypharr config, the three *arr configs, systemd
-unit) — byte-identical to the installer's output, verified against the real
-shell functions. The Care view handles backups, restore, one-key updates with
-automatic rollback, native config regeneration, and clean uninstall.
-See [ROADMAP.md](ROADMAP.md) for what's next.
+**Phase 4 — polish & packaging** (current): first-run welcome, `porthole
+--version`, self-updating binary (checksum-verified, daily background check),
+and release CI that publishes a 2MB tarball on every version tag.
+See [ROADMAP.md](ROADMAP.md) for the full journey.
 
 ## License
 

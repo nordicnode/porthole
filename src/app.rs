@@ -12,7 +12,7 @@ use crate::docker::{self, ServiceStatus};
 use crate::provision::{self, Preferences, ProvEvent, StepStatus, STEPS};
 use crate::services::SERVICES;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Screen {
     Dashboard,
     Wizard,
@@ -477,6 +477,8 @@ pub enum CareOp {
     Restore(PathBuf),
     RegenConfigs,
     CheckUpdates,
+    CheckPortholeUpdate,
+    InstallPortholeUpdate(crate::selfupdate::ReleaseInfo),
     UpdateFleet,
     Uninstall,
 }
@@ -488,6 +490,8 @@ impl CareOp {
             CareOp::Restore(_) => "Restore a backup",
             CareOp::RegenConfigs => "Regenerate configs",
             CareOp::CheckUpdates => "Check for updates",
+            CareOp::CheckPortholeUpdate => "Check for Porthole updates",
+            CareOp::InstallPortholeUpdate(_) => "Install Porthole update",
             CareOp::UpdateFleet => "Update fleet",
             CareOp::Uninstall => "Uninstall fleet",
         }
@@ -503,6 +507,10 @@ impl CareOp {
             CareOp::CheckUpdates => {
                 "See if any service has a new version. Downloads, but changes nothing."
             }
+            CareOp::CheckPortholeUpdate => {
+                "See if a new Porthole itself is out. Nothing changes until you say so."
+            }
+            CareOp::InstallPortholeUpdate(_) => "Replace this Porthole with the new release.",
             CareOp::UpdateFleet => {
                 "Back up, update everything, check health, roll back automatically if it breaks."
             }
@@ -542,6 +550,22 @@ impl CareOp {
                 "Porthole will download the latest images and tell you what's new.".to_string(),
                 "Nothing restarts. Nothing changes.".to_string(),
             ],
+            CareOp::CheckPortholeUpdate => vec![
+                "Porthole will ask GitHub if a new release is out.".to_string(),
+                "Nothing downloads until you say so.".to_string(),
+            ],
+            CareOp::InstallPortholeUpdate(rel) => vec![
+                format!(
+                    "Porthole {} is available (you're running v{}).",
+                    rel.tag,
+                    crate::selfupdate::CURRENT_VERSION
+                ),
+                "Porthole will:".to_string(),
+                "  • download the new release".to_string(),
+                "  • verify its checksum before touching anything".to_string(),
+                "  • swap the binary (your settings are kept)".to_string(),
+                "You'll restart Porthole yourself afterwards.".to_string(),
+            ],
             CareOp::UpdateFleet => vec![
                 "Porthole will:".to_string(),
                 "  1. back up your configs".to_string(),
@@ -566,6 +590,7 @@ pub(crate) const CARE_ACTIONS: &[fn() -> CareOp] = &[
     || CareOp::Restore(PathBuf::new()), // placeholder → backup picker
     || CareOp::RegenConfigs,
     || CareOp::CheckUpdates,
+    || CareOp::CheckPortholeUpdate,
     || CareOp::UpdateFleet,
     || CareOp::Uninstall,
 ];
@@ -640,6 +665,12 @@ impl CareState {
         for ev in events {
             match ev {
                 crate::care::CareEvent::Log(line) => self.push_log(line),
+                crate::care::CareEvent::UpdateAvailable(rel) => {
+                    self.rx = None;
+                    self.pending_op = Some(CareOp::InstallPortholeUpdate(rel));
+                    self.confirm_armed = false;
+                    self.view = CareView::Confirm;
+                }
                 crate::care::CareEvent::Finished(Ok(msg)) => {
                     self.rx = None;
                     self.done_message = msg;
@@ -740,6 +771,24 @@ fn run_care_op(
     install_dir: Option<String>,
     tx: std::sync::mpsc::Sender<crate::care::CareEvent>,
 ) {
+    // Self-update check is special: when an update is found we hand control
+    // to the confirm screen instead of finishing.
+    if matches!(op, CareOp::CheckPortholeUpdate) {
+        match crate::selfupdate::check_for_update() {
+            Ok(Some(rel)) => {
+                let _ = tx.send(crate::care::CareEvent::UpdateAvailable(rel));
+            }
+            Ok(None) => {
+                let _ = tx.send(crate::care::CareEvent::Finished(Ok(
+                    "You're running the latest Porthole.".to_string(),
+                )));
+            }
+            Err(e) => {
+                let _ = tx.send(crate::care::CareEvent::Finished(Err(format!("{e:#}"))));
+            }
+        }
+        return;
+    }
     let dir = || -> anyhow::Result<String> {
         install_dir.clone().ok_or_else(|| {
             anyhow::anyhow!(
@@ -781,6 +830,13 @@ fn run_care_op(
             crate::care::update_fleet(std::path::Path::new(&d), &tx)?;
             Ok("Fleet updated — every service is healthy.".to_string())
         }
+        CareOp::CheckPortholeUpdate => {
+            unreachable!("handled above")
+        }
+        CareOp::InstallPortholeUpdate(rel) => {
+            let msg = crate::selfupdate::install_update(&rel)?;
+            Ok(msg)
+        }
         CareOp::Uninstall => {
             let d = dir()?;
             crate::care::uninstall(std::path::Path::new(&d), &tx)?;
@@ -804,26 +860,64 @@ pub struct App {
     pub wizard: WizardState,
     pub doctor: DoctorState,
     pub care: CareState,
+    /// First-run welcome overlay.
+    pub show_welcome: bool,
     /// Transient one-line feedback, cleared on the next keypress.
     pub flash: Option<String>,
+    update_rx: Option<Receiver<Result<Option<crate::selfupdate::ReleaseInfo>, String>>>,
 }
 
 impl App {
     pub fn new() -> Self {
+        let config = config::load();
+        let show_welcome = !config.onboarded;
         let mut app = Self {
             screen: Screen::Dashboard,
             should_quit: false,
             dashboard_selected: 0,
             statuses: HashMap::new(),
             docker_missing: !docker::docker_available(),
-            config: config::load(),
+            config,
             wizard: WizardState::new(),
             doctor: DoctorState::new(),
             care: CareState::new(),
+            show_welcome,
             flash: None,
+            update_rx: None,
         };
         app.refresh_statuses();
+        // Never phone home during tests.
+        #[cfg(not(test))]
+        app.maybe_check_for_update();
         app
+    }
+
+    /// Check for a Porthole update at most once a day, in the background.
+    /// Silent on failure — this must never interrupt startup.
+    #[cfg_attr(test, allow(dead_code))]
+    fn maybe_check_for_update(&mut self) {
+        if !crate::selfupdate::should_check(self.config.last_update_check) {
+            return;
+        }
+        self.config.last_update_check = Some(crate::selfupdate::now_secs());
+        let _ = config::save(&self.config);
+        let (tx, rx) = mpsc::channel();
+        self.update_rx = Some(rx);
+        std::thread::spawn(move || {
+            let result = crate::selfupdate::check_for_update().map_err(|e| format!("{e:#}"));
+            let _ = tx.send(result);
+        });
+    }
+
+    fn dismiss_welcome(&mut self, goto_setup: bool) {
+        self.show_welcome = false;
+        self.config.onboarded = true;
+        if let Err(e) = config::save(&self.config) {
+            self.flash = Some(format!("Couldn't save settings: {e}"));
+        }
+        if goto_setup {
+            self.goto(Screen::Wizard);
+        }
     }
 
     pub fn refresh_statuses(&mut self) {
@@ -885,10 +979,33 @@ impl App {
             }
         }
         self.care.tick();
+        // Background self-update check.
+        if let Some(rx) = &self.update_rx {
+            let results: Vec<_> = rx.try_iter().collect();
+            for r in results {
+                self.update_rx = None;
+                if let Ok(Some(rel)) = r {
+                    self.flash = Some(format!(
+                        "Porthole {} is available — see Care → Check for Porthole updates",
+                        rel.tag
+                    ));
+                }
+            }
+        }
     }
 
     pub fn on_key(&mut self, code: KeyCode) {
         self.flash = None;
+
+        // First-run welcome is modal: only Enter/Esc get through.
+        if self.show_welcome {
+            match code {
+                KeyCode::Enter => self.dismiss_welcome(true),
+                KeyCode::Esc => self.dismiss_welcome(false),
+                _ => {}
+            }
+            return;
+        }
 
         // Global keys.
         match code {
