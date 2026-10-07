@@ -1,0 +1,14 @@
+[package]
+name = "porthole"
+version = "0.1.0"
+edition = "2021"
+description = "Your self-hosted media fleet through one window — automated setup and seamless integration for TorBox, Plex, Jellyfin and the *arr apps."
+license = "MIT"
+repository = "https://github.com/nordicnode/porthole"
+
+[dependencies]
+ratatui = "0.29"
+crossterm = "0.28"
+anyhow = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
