@@ -5,9 +5,10 @@
 //! instead of errors.
 
 use std::collections::HashMap;
-use std::net::TcpListener;
+use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::process::Command;
+use std::time::Duration;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ServiceStatus {
@@ -95,6 +96,37 @@ pub fn port_in_use(port: u16) -> bool {
     TcpListener::bind(("127.0.0.1", port)).is_err()
 }
 
+/// True if we can open a TCP connection to 127.0.0.1:port within the timeout.
+/// Used for health checks: the container may exist without its web UI
+/// actually answering yet.
+pub fn port_open(port: u16, timeout_ms: u64) -> bool {
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    TcpStream::connect_timeout(&addr, Duration::from_millis(timeout_ms)).is_ok()
+}
+
+fn docker_cmd(args: &[&str]) -> bool {
+    Command::new("docker")
+        .args(args)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Start a container by name. Returns true if Docker reported success.
+pub fn start_container(name: &str) -> bool {
+    docker_cmd(&["start", name])
+}
+
+/// Stop a container by name. Returns true if Docker reported success.
+pub fn stop_container(name: &str) -> bool {
+    docker_cmd(&["stop", name])
+}
+
+/// Restart a container by name. Returns true if Docker reported success.
+pub fn restart_container(name: &str) -> bool {
+    docker_cmd(&["restart", name])
+}
+
 /// Porthole's own data dir: installer checkouts, etc.
 pub fn data_dir() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
@@ -138,5 +170,21 @@ mod tests {
         for c in CONTAINERS {
             assert!(map.contains_key(*c), "missing status for {c}");
         }
+    }
+
+    #[test]
+    fn port_open_matches_listener() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        assert!(port_open(port, 500));
+        drop(listener);
+        // A port nothing listens on must read closed (retry: release can lag).
+        for _ in 0..50 {
+            if !port_open(port, 200) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        panic!("port_open never agreed a released port was closed");
     }
 }

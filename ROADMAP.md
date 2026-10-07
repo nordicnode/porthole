@@ -35,17 +35,26 @@ Orchestrate, don't rewrite. The TorBox-Media-Server scripts are battle-tested
 - [x] Installer auto-fetched: shallow-clones TorBox-Media-Server into
       `~/.local/share/porthole` on first run, pulls updates when present
 
-## Phase 2 — Native provisioning
+## Phase 2 — Fleet management + Doctor ✅ (current)
+
+The product thesis extended to maintenance: Porthole doesn't just set the
+fleet up, it keeps it healthy — still with no expert knowledge required.
+
+- [x] Fleet actions from the dashboard: start / stop / restart per service
+      (`s` / `x` / `R`), with live status refresh and plain feedback
+- [x] Doctor view: fresh health check of Docker, compose, install location,
+      and every service (exists? running? port actually answering?)
+- [x] One-key fixes: the Doctor offers `[f]` to start stopped services,
+      then re-checks automatically
+- [x] Honest diagnosis: crash-looping services get a plain explanation,
+      not a useless "have you tried restarting it"
+- [x] Install location remembered in `~/.config/porthole/config.json`
+      (saved by the wizard on success)
+
+## Phase 3 — Native provisioning + care
 
 - [ ] Port config generation to Rust (compose file, `.env`, arr configs)
       so Porthole no longer shells out for the deterministic parts
-- [ ] Health checks per service with plain-language diagnosis
-      ("Sonarr can't reach Prowlarr — here's the one button that fixes it")
-- [ ] One-key repair for the common breakages (expired API keys, moved paths)
-
-## Phase 3 — Fleet management
-
-- [ ] Start/stop/restart/update per service or whole fleet
 - [ ] Update detection: new image versions with one-key safe updates + rollback
 - [ ] Backup/restore of the whole configuration
 - [ ] Uninstall that cleanly removes everything (mirrors `uninstall.sh`)

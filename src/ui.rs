@@ -10,7 +10,7 @@ use ratatui::{
 };
 
 use crate::{
-    app::{App, Screen, WizardPhase},
+    app::{App, CheckStatus, Screen, WizardPhase},
     docker::ServiceStatus,
     provision::{StepStatus, STEPS},
     services::{INTEGRATIONS, SERVICES},
@@ -89,22 +89,49 @@ pub fn render(f: &mut Frame, app: &App) {
         Screen::Dashboard => render_dashboard(f, app, root[1]),
         Screen::Wizard => render_wizard(f, app, root[1]),
         Screen::Integrations => render_integrations(f, root[1]),
+        Screen::Doctor => render_doctor(f, app, root[1]),
         Screen::Logs => render_logs(f, app, root[1]),
         Screen::Help => render_help(f, root[1]),
     }
 
-    // ── Footer ──
-    let footer = Paragraph::new(Line::from(vec![
-        Span::styled("Tab", Style::default().fg(ACCENT)),
-        Span::styled(" switch view   ", Style::default().fg(DIM)),
-        Span::styled("↑↓", Style::default().fg(ACCENT)),
-        Span::styled(" move   ", Style::default().fg(DIM)),
-        Span::styled("Enter", Style::default().fg(ACCENT)),
-        Span::styled(" confirm   ", Style::default().fg(DIM)),
-        Span::styled("q", Style::default().fg(ACCENT)),
-        Span::styled(" quit", Style::default().fg(DIM)),
-    ]))
-    .block(
+    // ── Footer: key hints + transient feedback ──
+    let mut keys: Vec<(&str, &str)> = vec![
+        ("Tab", "switch view"),
+        ("↑↓", "move"),
+        ("Enter", "confirm"),
+        ("q", "quit"),
+    ];
+    match app.screen {
+        Screen::Dashboard => keys.extend([
+            ("r", "refresh"),
+            ("s", "start"),
+            ("x", "stop"),
+            ("R", "restart"),
+        ]),
+        Screen::Doctor => keys.extend([("d", "re-check"), ("f", "apply fix")]),
+        _ => {}
+    }
+    let key_line = Line::from(
+        keys.iter()
+            .flat_map(|(k, d)| {
+                vec![
+                    Span::styled(*k, Style::default().fg(ACCENT)),
+                    Span::styled(format!(" {d}   "), Style::default().fg(DIM)),
+                ]
+            })
+            .collect::<Vec<_>>(),
+    );
+    let status_line = match &app.flash {
+        Some(msg) => Line::from(vec![Span::styled(
+            format!("→ {msg}"),
+            Style::default().fg(WARM).add_modifier(Modifier::BOLD),
+        )]),
+        None => Line::from(vec![Span::styled(
+            "Porthole — your fleet, wired together.",
+            Style::default().fg(DIM),
+        )]),
+    };
+    let footer = Paragraph::new(Text::from(vec![key_line, status_line])).block(
         Block::default()
             .borders(Borders::TOP)
             .border_style(Style::default().fg(DIM)),
@@ -509,6 +536,60 @@ fn render_integrations(f: &mut Frame, area: Rect) {
     f.render_widget(para, area);
 }
 
+fn render_doctor(f: &mut Frame, app: &App, area: Rect) {
+    let d = &app.doctor;
+    let mut items: Vec<ListItem> = vec![
+        ListItem::new(Line::from(vec![Span::styled(
+            "The Doctor checks every part of your fleet and explains problems in plain words.",
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::ITALIC),
+        )])),
+        ListItem::new(Line::from("")),
+    ];
+    for (i, c) in d.checks.iter().enumerate() {
+        let (glyph, color) = match c.status {
+            CheckStatus::Pass => ("●", GOOD),
+            CheckStatus::Warn => ("◐", WARM),
+            CheckStatus::Fail => ("✖", BAD),
+        };
+        let selected = i == d.selected;
+        let mut lines = vec![
+            Line::from(vec![
+                Span::styled(
+                    if selected { "▸ " } else { "  " },
+                    Style::default().fg(ACCENT),
+                ),
+                Span::styled(format!("{glyph} "), Style::default().fg(color)),
+                Span::styled(
+                    c.name.clone(),
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]),
+            Line::from(vec![
+                Span::raw("      "),
+                Span::styled(c.message.clone(), Style::default().fg(Color::Gray)),
+            ]),
+        ];
+        if !c.fix_label.is_empty() {
+            lines.push(Line::from(vec![
+                Span::raw("      "),
+                Span::styled(
+                    format!("[f] {}", c.fix_label),
+                    Style::default().fg(GOOD).add_modifier(Modifier::BOLD),
+                ),
+            ]));
+        }
+        items.push(ListItem::new(Text::from(lines)));
+    }
+    let list = List::new(items).block(title_block(
+        "Doctor — fleet health in plain words (d to re-check)",
+    ));
+    f.render_widget(list, area);
+}
+
 fn render_logs(f: &mut Frame, app: &App, area: Rect) {
     let lines: Vec<Line> = app
         .wizard
@@ -552,12 +633,15 @@ fn render_help(f: &mut Frame, area: Rect) {
             Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
         )]),
         Line::from(""),
-        Line::from("  1–4 / Tab      switch views"),
+        Line::from("  1–5 / Tab      switch views"),
         Line::from("  ↑ ↓            move in lists and forms"),
         Line::from("  type           fill in the setup form"),
         Line::from("  Space / ← →    switch Plex ↔ Jellyfin"),
-        Line::from("  Enter          confirm / start"),
+        Line::from("  Enter          confirm / start / apply fix"),
+        Line::from("  s / x / R      start / stop / restart service (Fleet view)"),
         Line::from("  r              refresh fleet status (Fleet view)"),
+        Line::from("  d              re-run Doctor checks"),
+        Line::from("  f              apply the Doctor's suggested fix"),
         Line::from("  ?              this help"),
         Line::from("  q              quit"),
         Line::from(""),

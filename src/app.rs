@@ -1,10 +1,12 @@
-//! Application state: screens, the setup wizard state machine, input handling.
+//! Application state: screens, the setup wizard state machine, the Doctor,
+//! input handling.
 
 use std::collections::HashMap;
 use std::sync::mpsc::{self, Receiver};
 
 use crossterm::event::KeyCode;
 
+use crate::config::{self, Config};
 use crate::docker::{self, ServiceStatus};
 use crate::provision::{self, Preferences, ProvEvent, StepStatus, STEPS};
 use crate::services::SERVICES;
@@ -14,15 +16,17 @@ pub enum Screen {
     Dashboard,
     Wizard,
     Integrations,
+    Doctor,
     Logs,
     Help,
 }
 
 impl Screen {
-    pub const ALL: [Screen; 5] = [
+    pub const ALL: [Screen; 6] = [
         Screen::Dashboard,
         Screen::Wizard,
         Screen::Integrations,
+        Screen::Doctor,
         Screen::Logs,
         Screen::Help,
     ];
@@ -32,11 +36,14 @@ impl Screen {
             Screen::Dashboard => "Fleet",
             Screen::Wizard => "Setup",
             Screen::Integrations => "Wiring",
+            Screen::Doctor => "Doctor",
             Screen::Logs => "Logs",
             Screen::Help => "Help",
         }
     }
 }
+
+// ─────────────────────────── Setup wizard ───────────────────────────
 
 /// Where the wizard is in its flow.
 #[derive(PartialEq, Eq)]
@@ -131,11 +138,12 @@ impl WizardState {
         }
     }
 
-    fn drain_events(&mut self) {
+    fn drain_events(&mut self) -> Option<bool> {
         let events: Vec<ProvEvent> = match &self.rx {
             Some(rx) => rx.try_iter().collect(),
             None => Vec::new(),
         };
+        let mut finished = None;
         for ev in events {
             match ev {
                 ProvEvent::Log(line) => self.push_log(line),
@@ -168,9 +176,11 @@ impl WizardState {
                         "── Setup stopped early — see the log above, fix it, run again. ──"
                             .to_string()
                     });
+                    finished = Some(ok);
                 }
             }
         }
+        finished
     }
 
     fn on_key(&mut self, code: KeyCode) {
@@ -216,9 +226,8 @@ impl WizardState {
                 _ => {}
             },
             WizardPhase::Running => {
-                // Deliberately no keys: killing the UI mid-install is safe
-                // (the installer is a separate process and keeps going),
-                // but we don't offer it as a casual action.
+                // Deliberately no keys: the installer is a separate process
+                // and keeps going; we don't offer casual interruption.
             }
             WizardPhase::Done(_) => {
                 if code == KeyCode::Enter {
@@ -228,11 +237,234 @@ impl WizardState {
         }
     }
 
-    fn tick(&mut self) {
+    fn tick(&mut self) -> Option<bool> {
         self.tick += 1;
-        self.drain_events();
+        self.drain_events()
     }
 }
+
+// ─────────────────────────── Doctor ───────────────────────────
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum CheckStatus {
+    Pass,
+    Warn,
+    Fail,
+}
+
+/// A one-key fix the Doctor can apply.
+#[derive(Clone)]
+pub enum Fix {
+    StartContainer(String),
+}
+
+/// One health check, explained in plain language.
+#[derive(Clone)]
+pub struct Check {
+    pub name: String,
+    pub message: String,
+    pub status: CheckStatus,
+    pub fix: Option<Fix>,
+    pub fix_label: String,
+}
+
+pub struct DoctorState {
+    pub checks: Vec<Check>,
+    pub selected: usize,
+    pub ran: bool,
+}
+
+impl DoctorState {
+    fn new() -> Self {
+        Self {
+            checks: Vec::new(),
+            selected: 0,
+            ran: false,
+        }
+    }
+
+    /// Run every check fresh. Plain language throughout: each check says
+    /// what's wrong *and* what it means for the user.
+    fn run(&mut self, config: &Config) {
+        let mut checks = Vec::new();
+
+        // Docker itself.
+        if docker::docker_available() {
+            checks.push(Check {
+                name: "Docker".to_string(),
+                message: "Docker is installed and answering.".to_string(),
+                status: CheckStatus::Pass,
+                fix: None,
+                fix_label: String::new(),
+            });
+        } else {
+            checks.push(Check {
+                name: "Docker".to_string(),
+                message: "Docker isn't installed or isn't running. Nothing else can work until it is — install it from docker.com, then come back.".to_string(),
+                status: CheckStatus::Fail,
+                fix: None,
+                fix_label: String::new(),
+            });
+            self.checks = checks;
+            self.selected = 0;
+            self.ran = true;
+            return;
+        }
+
+        if docker::compose_available() {
+            checks.push(Check {
+                name: "Compose".to_string(),
+                message: "The docker compose helper is here.".to_string(),
+                status: CheckStatus::Pass,
+                fix: None,
+                fix_label: String::new(),
+            });
+        } else {
+            checks.push(Check {
+                name: "Compose".to_string(),
+                message: "The 'docker compose' helper is missing. The Setup wizard can install it for you.".to_string(),
+                status: CheckStatus::Warn,
+                fix: None,
+                fix_label: String::new(),
+            });
+        }
+
+        match &config.install_dir {
+            Some(dir) => checks.push(Check {
+                name: "Install location".to_string(),
+                message: format!("Porthole remembers your fleet lives at {dir}."),
+                status: CheckStatus::Pass,
+                fix: None,
+                fix_label: String::new(),
+            }),
+            None => checks.push(Check {
+                name: "Install location".to_string(),
+                message: "Porthole doesn't know where your fleet was installed yet. Run the Setup wizard once and it'll remember.".to_string(),
+                status: CheckStatus::Warn,
+                fix: None,
+                fix_label: String::new(),
+            }),
+        }
+
+        // Every service: exists? running? actually answering?
+        let statuses = docker::service_statuses();
+        for svc in SERVICES {
+            if svc.id == "torbox" {
+                checks.push(Check {
+                    name: svc.name.to_string(),
+                    message: "TorBox lives in the cloud — nothing to check on this machine."
+                        .to_string(),
+                    status: CheckStatus::Pass,
+                    fix: None,
+                    fix_label: String::new(),
+                });
+                continue;
+            }
+            let status = statuses
+                .get(svc.id)
+                .copied()
+                .unwrap_or(ServiceStatus::NotInstalled);
+            match status {
+                ServiceStatus::Running => {
+                    if docker::port_open(svc.port, 400) {
+                        checks.push(Check {
+                            name: svc.name.to_string(),
+                            message: format!("Up and answering on port {}.", svc.port),
+                            status: CheckStatus::Pass,
+                            fix: None,
+                            fix_label: String::new(),
+                        });
+                    } else {
+                        checks.push(Check {
+                            name: svc.name.to_string(),
+                            message: "Its container is running but its page isn't answering yet — it's probably still starting up. Give it a minute.".to_string(),
+                            status: CheckStatus::Warn,
+                            fix: None,
+                            fix_label: String::new(),
+                        });
+                    }
+                }
+                ServiceStatus::Stopped => checks.push(Check {
+                    name: svc.name.to_string(),
+                    message: "Installed but not running. Your fleet is missing a crew member."
+                        .to_string(),
+                    status: CheckStatus::Warn,
+                    fix: Some(Fix::StartContainer(svc.id.to_string())),
+                    fix_label: format!("Start {}", svc.name),
+                }),
+                ServiceStatus::Failed => checks.push(Check {
+                    name: svc.name.to_string(),
+                    message: "It keeps stopping on its own. This usually means something in its settings needs attention — starting it again probably won't help.".to_string(),
+                    status: CheckStatus::Fail,
+                    fix: None,
+                    fix_label: String::new(),
+                }),
+                ServiceStatus::NotInstalled => checks.push(Check {
+                    name: svc.name.to_string(),
+                    message: "Not installed yet. The Setup wizard will bring it aboard."
+                        .to_string(),
+                    status: CheckStatus::Warn,
+                    fix: None,
+                    fix_label: String::new(),
+                }),
+                ServiceStatus::Unknown => checks.push(Check {
+                    name: svc.name.to_string(),
+                    message: "Can't tell — Docker isn't answering.".to_string(),
+                    status: CheckStatus::Warn,
+                    fix: None,
+                    fix_label: String::new(),
+                }),
+            }
+        }
+
+        self.checks = checks;
+        self.selected = 0;
+        self.ran = true;
+    }
+
+    /// Apply the selected check's fix. Returns a message for the flash line.
+    fn apply_fix(&mut self) -> Option<String> {
+        let check = self.checks.get(self.selected)?;
+        match check.fix.clone()? {
+            Fix::StartContainer(name) => {
+                if docker::start_container(&name) {
+                    Some(format!("{} started.", check.name))
+                } else {
+                    Some(format!(
+                        "Couldn't start {} — see the Logs view.",
+                        check.name
+                    ))
+                }
+            }
+        }
+    }
+
+    fn on_key(&mut self, code: KeyCode, config: &Config) -> Option<String> {
+        match code {
+            KeyCode::Up => {
+                self.selected = self.selected.saturating_sub(1);
+                None
+            }
+            KeyCode::Down => {
+                let max = self.checks.len().saturating_sub(1);
+                self.selected = (self.selected + 1).min(max);
+                None
+            }
+            KeyCode::Char('d') => {
+                self.run(config);
+                None
+            }
+            KeyCode::Char('f') | KeyCode::Enter => {
+                let msg = self.apply_fix();
+                self.run(config); // re-check after the fix
+                msg
+            }
+            _ => None,
+        }
+    }
+}
+
+// ─────────────────────────── App ───────────────────────────
 
 pub struct App {
     pub screen: Screen,
@@ -240,7 +472,11 @@ pub struct App {
     pub dashboard_selected: usize,
     pub statuses: HashMap<String, ServiceStatus>,
     pub docker_missing: bool,
+    pub config: Config,
     pub wizard: WizardState,
+    pub doctor: DoctorState,
+    /// Transient one-line feedback, cleared on the next keypress.
+    pub flash: Option<String>,
 }
 
 impl App {
@@ -251,7 +487,10 @@ impl App {
             dashboard_selected: 0,
             statuses: HashMap::new(),
             docker_missing: !docker::docker_available(),
+            config: config::load(),
             wizard: WizardState::new(),
+            doctor: DoctorState::new(),
+            flash: None,
         };
         app.refresh_statuses();
         app
@@ -262,28 +501,75 @@ impl App {
         self.statuses = docker::service_statuses();
     }
 
+    fn goto(&mut self, screen: Screen) {
+        self.screen = screen;
+        if screen == Screen::Doctor {
+            self.doctor.run(&self.config);
+        }
+        if screen == Screen::Dashboard {
+            self.refresh_statuses();
+        }
+    }
+
+    /// Fleet action on the selected dashboard service. Returns feedback.
+    fn fleet_action(&mut self, action: &str) -> String {
+        let svc = match SERVICES.get(self.dashboard_selected) {
+            Some(s) => s,
+            None => return "Nothing selected.".to_string(),
+        };
+        if svc.id == "torbox" {
+            return "TorBox lives in the cloud — nothing to start or stop here.".to_string();
+        }
+        let ok = match action {
+            "start" => docker::start_container(svc.id),
+            "stop" => docker::stop_container(svc.id),
+            "restart" => docker::restart_container(svc.id),
+            _ => false,
+        };
+        self.refresh_statuses();
+        if ok {
+            format!("{}: {action} requested.", svc.name)
+        } else {
+            format!("{}: couldn't {action} it — is Docker running?", svc.name)
+        }
+    }
+
     pub fn on_tick(&mut self) {
-        self.wizard.tick();
+        if let Some(finished_ok) = self.wizard.tick() {
+            // The wizard just finished: remember where the fleet lives.
+            if finished_ok {
+                self.config.install_dir = Some(self.wizard.prefs.install_dir.clone());
+                if let Err(e) = config::save(&self.config) {
+                    self.flash = Some(format!("Setup done, but couldn't save settings: {e}"));
+                } else {
+                    self.refresh_statuses();
+                }
+            }
+        }
     }
 
     pub fn on_key(&mut self, code: KeyCode) {
+        self.flash = None;
+
         // Global keys.
         match code {
             KeyCode::Char('q') => {
                 self.should_quit = true;
                 return;
             }
-            KeyCode::Char('1') => self.screen = Screen::Dashboard,
-            KeyCode::Char('2') => self.screen = Screen::Wizard,
-            KeyCode::Char('3') => self.screen = Screen::Integrations,
-            KeyCode::Char('4') => self.screen = Screen::Logs,
-            KeyCode::Char('?') => self.screen = Screen::Help,
+            KeyCode::Char('1') => self.goto(Screen::Dashboard),
+            KeyCode::Char('2') => self.goto(Screen::Wizard),
+            KeyCode::Char('3') => self.goto(Screen::Integrations),
+            KeyCode::Char('4') => self.goto(Screen::Doctor),
+            KeyCode::Char('5') => self.goto(Screen::Logs),
+            KeyCode::Char('?') => self.goto(Screen::Help),
             KeyCode::Tab => {
                 let i = Screen::ALL
                     .iter()
                     .position(|s| *s == self.screen)
                     .unwrap_or(0);
-                self.screen = Screen::ALL[(i + 1) % Screen::ALL.len()];
+                let next = Screen::ALL[(i + 1) % Screen::ALL.len()];
+                self.goto(next);
             }
             _ => {}
         }
@@ -299,9 +585,25 @@ impl App {
                     self.dashboard_selected = (self.dashboard_selected + 1).min(max);
                 }
                 KeyCode::Char('r') => self.refresh_statuses(),
+                KeyCode::Char('s') => {
+                    self.flash = Some(self.fleet_action("start"));
+                }
+                KeyCode::Char('x') => {
+                    self.flash = Some(self.fleet_action("stop"));
+                }
+                KeyCode::Char('R') => {
+                    self.flash = Some(self.fleet_action("restart"));
+                }
                 _ => {}
             },
             Screen::Wizard => self.wizard.on_key(code),
+            Screen::Doctor => {
+                let config = self.config.clone();
+                if let Some(msg) = self.doctor.on_key(code, &config) {
+                    self.flash = Some(msg);
+                    self.refresh_statuses();
+                }
+            }
             _ => {}
         }
     }
