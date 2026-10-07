@@ -884,6 +884,12 @@ pub fn setup_vpn(
         &format!("- WIREGUARD_PRIVATE_KEY={wireguard_key}"),
     );
     std::fs::write(&dest, yml)?;
+    // 0600: the override now holds the VPN private key.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o600));
+    }
     log("[ok] VPN credentials written (kept in the override, never logged)");
     log("[in] restarting gluetun… (this takes ~30s)");
     let out = std::process::Command::new("docker")

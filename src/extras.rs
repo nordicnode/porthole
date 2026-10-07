@@ -347,6 +347,12 @@ pub fn write_full_override(
     if extras.any() || fleet_profile.needs_local_clients() {
         std::fs::write(&path, render_full_override(extras, fleet_profile))
             .context("writing override file")?;
+        // 0600: the override holds the VPN private key (written by Care).
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+        }
     } else if path.exists() {
         std::fs::remove_file(&path).context("removing override file")?;
     }
