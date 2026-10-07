@@ -156,11 +156,10 @@ impl App {
                 }
                 _ => {}
             },
-            Screen::Wizard => {
-                if code == KeyCode::Enter {
-                    self.wizard.start();
-                }
+            Screen::Wizard if code == KeyCode::Enter => {
+                self.wizard.start();
             }
+            Screen::Wizard => {}
             _ => {}
         }
     }
