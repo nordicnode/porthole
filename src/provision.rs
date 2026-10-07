@@ -680,4 +680,39 @@ mod tests {
         assert!(!STEPS.is_empty());
         assert!(STEPS.iter().any(|s| s.title.contains("introduce")));
     }
+
+    #[test]
+    fn expected_services_match_choices() {
+        // Base + Plex (default), no extras.
+        let p = valid_prefs();
+        let ids = expected_service_ids(&p);
+        assert!(ids.contains(&"sonarr"));
+        assert!(ids.contains(&"plex"));
+        assert!(!ids.contains(&"jellyfin"));
+        assert!(!ids.contains(&"lidarr"));
+
+        // Jellyfin instead of Plex.
+        let mut p2 = valid_prefs();
+        p2.media_server = MediaServer::Jellyfin;
+        let ids2 = expected_service_ids(&p2);
+        assert!(ids2.contains(&"jellyfin"));
+        assert!(!ids2.contains(&"plex"));
+
+        // Opted-in extras appear; others don't.
+        let mut p3 = valid_prefs();
+        p3.extras.lidarr = true;
+        p3.extras.jellystat = true;
+        let ids3 = expected_service_ids(&p3);
+        assert!(ids3.contains(&"lidarr"));
+        assert!(ids3.contains(&"jellystat"));
+        assert!(ids3.contains(&"jellystat-db"));
+        assert!(!ids3.contains(&"bazarr"));
+
+        // Local profile adds the download clients.
+        let mut p4 = valid_prefs();
+        p4.fleet_profile = crate::download::FleetProfile::Local;
+        let ids4 = expected_service_ids(&p4);
+        assert!(ids4.contains(&"qbittorrent"));
+        assert!(ids4.contains(&"sabnzbd"));
+    }
 }

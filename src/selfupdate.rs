@@ -168,30 +168,30 @@ pub fn install_update(rel: &ReleaseInfo) -> Result<String> {
         let tarball = work.join(&rel.asset_name);
         download(&rel.asset_url, &tarball)?;
 
-        // 2. Verify checksum if the release publishes one.
-        if let Some(url) = &rel.checksum_url {
-            if !crate::docker::command_exists("sha256sum") {
-                anyhow::bail!("sha256sum is missing — refusing to install an unverified binary");
-            }
-            let sums_file = work.join("SHA256SUMS");
-            download(url, &sums_file)?;
-            let sums = std::fs::read_to_string(&sums_file)?;
-            let expected = sums
-                .lines()
-                .find(|l| l.contains(&rel.asset_name))
-                .and_then(|l| l.split_whitespace().next())
-                .context("checksum file doesn't mention the download")?;
-            let out = Command::new("sha256sum")
-                .arg(&tarball)
-                .output()
-                .context("running sha256sum")?;
-            let actual = String::from_utf8_lossy(&out.stdout);
-            let actual = actual.split_whitespace().next().unwrap_or("");
-            if actual != expected {
-                anyhow::bail!(
-                    "checksum mismatch — the download may be corrupt; refusing to install"
-                );
-            }
+        // 2. Verify checksum. Refuse to install if unverifiable.
+        let url = rel
+            .checksum_url
+            .as_ref()
+            .context("release has no checksum file — refusing to install an unverified binary")?;
+        if !crate::docker::command_exists("sha256sum") {
+            anyhow::bail!("sha256sum is missing — refusing to install an unverified binary");
+        }
+        let sums_file = work.join("SHA256SUMS");
+        download(url, &sums_file)?;
+        let sums = std::fs::read_to_string(&sums_file)?;
+        let expected = sums
+            .lines()
+            .find(|l| l.contains(&rel.asset_name))
+            .and_then(|l| l.split_whitespace().next())
+            .context("checksum file doesn't mention the download")?;
+        let out = Command::new("sha256sum")
+            .arg(&tarball)
+            .output()
+            .context("running sha256sum")?;
+        let actual = String::from_utf8_lossy(&out.stdout);
+        let actual = actual.split_whitespace().next().unwrap_or("");
+        if actual != expected {
+            anyhow::bail!("checksum mismatch — the download may be corrupt; refusing to install");
         }
 
         // 3. Extract and find the binary.

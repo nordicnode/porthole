@@ -84,9 +84,12 @@ pub fn restore_backup(backup: &Path, install_dir: &Path) -> Result<()> {
     if !backup.is_file() {
         anyhow::bail!("backup {} not found", backup.display());
     }
-    for svc in SERVICES.iter().filter(|s| s.port != 0) {
-        let _ = docker::stop_container(svc.id);
-    }
+    // Stop everything via compose (auto-discovers the override).
+    // Don't filter by SERVICES — extras/companions run too.
+    let _ = std::process::Command::new("docker")
+        .args(["compose", "down"])
+        .current_dir(install_dir)
+        .status();
     let parent = install_dir.parent().context("install dir has no parent")?;
     let status = Command::new("tar")
         .args([
@@ -106,7 +109,7 @@ pub fn restore_backup(backup: &Path, install_dir: &Path) -> Result<()> {
 /// Human-readable list of what uninstall would remove.
 pub fn uninstall_plan(install_dir: &Path) -> Vec<String> {
     let mut plan = vec![
-        "Stop and remove all 8 fleet containers".to_string(),
+        "Stop and remove all fleet containers (base + extras + companions)".to_string(),
         format!("Delete the install dir: {}", install_dir.display()),
         "Disable the torbox-media-server systemd service (if present)".to_string(),
         "Remove the unused Docker network (media-network)".to_string(),
@@ -144,8 +147,10 @@ pub fn uninstall(install_dir: &Path, tx: &Sender<CareEvent>) -> Result<()> {
             "[warn] compose down had issues"
         });
     }
-    for svc in SERVICES.iter().filter(|s| s.port != 0) {
-        let _ = Command::new("docker").args(["rm", "-f", svc.id]).output();
+    // Belt-and-braces: remove any leftover fleet containers by name.
+    // Use all compose services (base + override extras), not just SERVICES.
+    for svc_id in compose_service_ids(install_dir) {
+        let _ = Command::new("docker").args(["rm", "-f", &svc_id]).output();
     }
     log("[ok] containers removed");
     // 2. systemd service.
@@ -209,14 +214,21 @@ pub fn check_updates(install_dir: &Path, tx: &Sender<CareEvent>) -> Result<Vec<U
     }
     let after = image_ids(install_dir);
     let mut updates = Vec::new();
-    for svc in SERVICES.iter().filter(|s| s.port != 0) {
-        let b = before.get(svc.id);
-        let a = after.get(svc.id);
+    // Check all compose services (base + override extras), not just SERVICES.
+    for svc_id in compose_service_ids(install_dir) {
+        let b = before.get(&svc_id);
+        let a = after.get(&svc_id);
         if b != a && a.is_some() {
+            // Friendly name from SERVICES, fallback to the ID.
+            let name = SERVICES
+                .iter()
+                .find(|s| s.id == svc_id)
+                .map(|s| s.name.to_string())
+                .unwrap_or_else(|| svc_id.clone());
             updates.push(UpdateInfo {
-                service: svc.name.to_string(),
+                service: name.clone(),
             });
-            log(&format!("[ok] {} has an update", svc.name));
+            log(&format!("[ok] {name} has an update"));
         }
     }
     if updates.is_empty() {
@@ -228,8 +240,9 @@ pub fn check_updates(install_dir: &Path, tx: &Sender<CareEvent>) -> Result<Vec<U
 /// Map service id -> current image ID via `docker compose config` + inspect.
 fn image_ids(install_dir: &Path) -> std::collections::HashMap<String, String> {
     let mut map = std::collections::HashMap::new();
-    for svc in SERVICES.iter().filter(|s| s.port != 0) {
-        if let Some(image) = service_image(install_dir, svc.id) {
+    // All compose services (base + override extras), not just SERVICES.
+    for svc_id in compose_service_ids(install_dir) {
+        if let Some(image) = service_image(install_dir, &svc_id) {
             let id = Command::new("docker")
                 .args(["images", "-q", &image])
                 .output()
@@ -240,10 +253,64 @@ fn image_ids(install_dir: &Path) -> std::collections::HashMap<String, String> {
                         .map(|s| s.lines().next().unwrap_or("").to_string())
                 })
                 .unwrap_or_default();
-            map.insert(svc.id.to_string(), id);
+            map.insert(svc_id, id);
         }
     }
     map
+}
+
+/// All service IDs from the compose files (base + override extras).
+fn compose_service_ids(install_dir: &Path) -> Vec<String> {
+    (|| -> Option<Vec<String>> {
+        let out = Command::new("docker")
+            .args(["compose", "config", "--format", "json"])
+            .current_dir(install_dir)
+            .output()
+            .ok()?;
+        let v: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
+        Some(
+            v.get("services")?
+                .as_object()?
+                .keys()
+                .map(|k| k.to_string())
+                .collect(),
+        )
+    })()
+    .unwrap_or_default()
+}
+
+/// service_id -> host port for all compose services (base + override).
+fn compose_service_ports(install_dir: &Path) -> Vec<(String, u16)> {
+    (|| -> Option<Vec<(String, u16)>> {
+        let out = Command::new("docker")
+            .args(["compose", "config", "--format", "json"])
+            .current_dir(install_dir)
+            .output()
+            .ok()?;
+        let v: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
+        let services = v.get("services")?.as_object()?;
+        let mut result = Vec::new();
+        for (id, svc) in services {
+            // ports: [{target: 8686, published: "8686", ...}, ...]
+            if let Some(ports) = svc.get("ports").and_then(|p| p.as_array()) {
+                for port in ports {
+                    if let Some(published) = port.get("published") {
+                        let port_num = if let Some(s) = published.as_str() {
+                            s.parse::<u16>().ok()
+                        } else {
+                            published.as_u64().and_then(|n| u16::try_from(n).ok())
+                        };
+                        if let Some(p) = port_num {
+                            result.push((id.clone(), p));
+                            break; // first published port
+                        }
+                    }
+                }
+            }
+        }
+        Some(result)
+    })()
+    .unwrap_or_default()
 }
 
 fn service_image(install_dir: &Path, service_id: &str) -> Option<String> {
@@ -276,10 +343,12 @@ pub fn update_fleet(install_dir: &Path, tx: &Sender<CareEvent>) -> Result<()> {
     ));
 
     // 2. Tag current images so we can roll back to them.
+    // Get the full service list from compose (includes override extras).
     let tag = format!("porthole-prev-{}", timestamp());
     let mut tagged: Vec<(String, String, String)> = Vec::new(); // (service, image, old_id)
-    for svc in SERVICES.iter().filter(|s| s.port != 0) {
-        if let Some(image) = service_image(install_dir, svc.id) {
+    let all_services = compose_service_ids(install_dir);
+    for svc_id in all_services {
+        if let Some(image) = service_image(install_dir, &svc_id) {
             if let Some(id) = current_image_id(&image) {
                 // Tag the current image so we can roll back to it.
                 let repo = image.split(':').next().unwrap_or(&image);
@@ -290,7 +359,7 @@ pub fn update_fleet(install_dir: &Path, tx: &Sender<CareEvent>) -> Result<()> {
                     .map(|s| s.success())
                     .unwrap_or(false)
                 {
-                    tagged.push((svc.id.to_string(), image, id));
+                    tagged.push((svc_id, image, id));
                 }
             }
         }
@@ -326,14 +395,13 @@ pub fn update_fleet(install_dir: &Path, tx: &Sender<CareEvent>) -> Result<()> {
     }
 
     // 4. Health check: every service answering within 90s?
+    // Check all compose services (base + override extras), not just SERVICES.
     log("[in] waiting for services to answer (up to 90s)…");
     let deadline = std::time::Instant::now() + Duration::from_secs(90);
     let mut healthy = false;
     while std::time::Instant::now() < deadline {
-        healthy = SERVICES
-            .iter()
-            .filter(|s| s.port != 0)
-            .all(|s| docker::port_open(s.port, 500));
+        let ports = compose_service_ports(install_dir);
+        healthy = !ports.is_empty() && ports.iter().all(|(_, p)| docker::port_open(*p, 500));
         if healthy {
             break;
         }
