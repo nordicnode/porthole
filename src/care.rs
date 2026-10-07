@@ -1132,12 +1132,8 @@ pub fn setup_scheduled_backups(install_dir: &Path, tx: &Sender<CareEvent>) -> Re
     let log = |s: &str| {
         let _ = tx.send(CareEvent::Log(s.to_string()));
     };
-    // Find the porthole binary.
-    let exe = std::env::current_exe().context("locating the porthole binary")?;
-    // The backup command: porthole doesn't have a CLI backup mode yet,
-    // so we use a shell wrapper that calls the same tar logic.
-    // Actually — simpler: the timer runs a script that tars the install dir
-    // (excluding data/) with a timestamp, keeping the 7 newest.
+    // The timer runs a script that tars the install dir (excluding data/)
+    // with a timestamp, keeping the 7 newest.
     let script = format!(
         r#"#!/bin/bash
 # Porthole scheduled backup — generated, do not edit by hand.
@@ -1178,7 +1174,6 @@ ls -t "$DEST"/porthole-backup-*.tar.gz 2>/dev/null | tail -n +8 | xargs -r rm --
     log("  sudo cp <install>/configs/porthole-backup.* /etc/systemd/system/");
     log("  sudo systemctl enable --now porthole-backup.timer");
     log("[note] keeps the 7 newest backups, deletes older ones");
-    let _ = exe; // (reserved for a future --backup CLI mode)
     Ok(())
 }
 
