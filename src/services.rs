@@ -162,4 +162,14 @@ pub static INTEGRATIONS: &[Integration] = &[
         to: "Plex",
         plain: "What you request shows up where you watch. One login, one search box.",
     },
+    Integration {
+        from: "Configarr",
+        to: "Sonarr",
+        plain: "Expert quality profiles are synced in automatically — the right releases, every time, no settings maze.",
+    },
+    Integration {
+        from: "Configarr",
+        to: "Radarr",
+        plain: "Same expert tuning for movies: quality, formats and naming, kept in sync.",
+    },
 ];

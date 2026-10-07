@@ -59,6 +59,8 @@ pub struct Preferences {
     pub puid: String,
     pub pgid: String,
     pub tz: String,
+    /// Quality profile choice: false = 1080p, true = 4K. Drives Configarr.
+    pub quality_4k: bool,
 }
 
 impl Default for Preferences {
@@ -71,6 +73,7 @@ impl Default for Preferences {
             puid: "1000".to_string(),
             pgid: "1000".to_string(),
             tz: "UTC".to_string(),
+            quality_4k: false,
         }
     }
 }
@@ -162,6 +165,11 @@ pub static STEPS: &[StepDef] = &[
         plain: "Check every service actually came up healthy.",
         wires_up: "—",
     },
+    StepDef {
+        title: "Tune the quality",
+        plain: "Apply the TRaSH Guides' expert quality profiles to Sonarr and Radarr.",
+        wires_up: "Configarr→Sonarr/Radarr",
+    },
 ];
 
 /// Events the worker thread sends back to the UI.
@@ -185,6 +193,16 @@ pub fn run_provision(prefs: Preferences, tx: Sender<ProvEvent>) {
         let _ = tx.send(e);
     };
     let log = |s: &str| send(ProvEvent::Log(s.to_string()));
+
+    // Remember the quality answer for later re-runs (Care action).
+    let quality_path = std::path::Path::new(&prefs.install_dir).join(".porthole-quality");
+    if let Some(parent) = quality_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(
+        &quality_path,
+        if prefs.quality_4k { "4k\n" } else { "1080p\n" },
+    );
 
     // ── Step 0: toolbox ──
     send(ProvEvent::StepBegin(0));
@@ -357,6 +375,32 @@ pub fn run_provision(prefs: Preferences, tx: Sender<ProvEvent>) {
     } else {
         log("[warn] some services didn't come up — check the log above");
     }
+
+    // ── Step 5: expert quality profiles (Configarr) ──
+    // Best-effort: a Configarr failure must not fail the whole install.
+    if all_ok {
+        send(ProvEvent::StepBegin(5));
+        log("[in] applying expert quality profiles (TRaSH Guides)…");
+        let install = std::path::Path::new(&prefs.install_dir);
+        let (ctx_tx, ctx_rx) = std::sync::mpsc::channel();
+        let quality_ok =
+            match crate::care::apply_quality_profiles(install, prefs.quality_4k, &ctx_tx) {
+                Ok(()) => true,
+                Err(e) => {
+                    log(&format!("[warn] quality profiles skipped: {e:#}"));
+                    log("[warn] you can apply them later: Care → Apply expert quality profiles");
+                    false
+                }
+            };
+        // Drain Configarr's progress into the provision log (redacted).
+        for msg in ctx_rx.try_iter() {
+            if let crate::care::CareEvent::Log(line) = msg {
+                log(&line);
+            }
+        }
+        send(ProvEvent::StepDone(5, quality_ok));
+    }
+
     send(ProvEvent::Finished(all_ok));
 }
 

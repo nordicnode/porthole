@@ -197,61 +197,72 @@ upstream 1.6.x; Jellyfin 12.x API parity for Janitorr deletes.
 ## Phase 6 — Expert config, zero questions
 
 Researched October 2026. The key finding: **Porthole should not
-hand-configure the *arrs at all.** Ship **Configarr** as a fleet
-container (2026's better default over Recyclarr: feature superset,
-Lidarr support, active development, accepts Recyclarr templates) and
-generate its `config.yml` from four user questions. Configarr then
-syncs TRaSH-Guides quality profiles, custom formats + scores, quality
-sizes, and file naming — idempotently, on a schedule. Hand edits to
-managed profiles get reverted by design; Porthole designs around that
-instead of fighting it.
+hand-configure the *arrs at all.** Ship **Configarr** (2026's better
+default over Recyclarr: feature superset, Lidarr support, active
+development, accepts Recyclarr templates) and generate its `config.yml`
+from user answers. Configarr then syncs TRaSH-Guides quality profiles,
+custom formats + scores, quality sizes, and file naming —
+idempotently. Hand edits to managed profiles get reverted by design;
+Porthole designs around that instead of fighting it.
 
-- [ ] **Configarr as a first-class fleet member**: container + generated
-      `config.yml`, scheduled sync. The four questions: 1080p vs 4K, HDR
-      preference, HD-audio preference, anime? Everything else automatic.
-- [ ] **TRaSH 2026 profiles applied**: Sonarr `WEB-1080p`/`WEB-2160p`,
-      Radarr `HD Bluray + WEB`/`UHD Bluray + WEB` (+Remux variants);
-      cutoff = top quality, upgrades ON, min CF score 0, upgrade-until
-      10,000; unwanted CFs at −10,000 (BR-DISK, LQ, x265-HD, Extras,
-      AV1 — still blocked in 2026, no VVC guidance exists); group tiers
-      +1600–1800 (P2P over scene); Radarr audio ladder TrueHD Atmos
-      5000 → DD 750; 4K HDR stack (HDR/DV/DV-Boost scores, DV-no-fallback
-      −10,000). Propers & Repacks = **Do Not Prefer** (Repack/Proper
-      CFs handle it).
-- [ ] **Exact TRaSH naming applied**: Radarr Plex-TMDb variant with
-      `{tmdb-{TmdbId}}` + `{edition-{Edition Tags}}` (Jellyfin variants
-      use `[tmdbid-…]`); Sonarr standard/daily/anime formats with
-      `{tvdb-{TvdbId}}` series folders and `Season {season:00}`;
-      multi-episode = Prefixed Range. (Full strings in research notes.)
-- [ ] **Decypharr wiring, exact**: download client host
-      `decypharr:8282`, category per app (`sonarr`/`radarr`/`lidarr`);
-      **Username = the *arr's own URL** (e.g. `http://sonarr:8989`),
-      **Password = the *arr's API key** — not auth, it's callback
-      routing. Remove Completed = Yes, Remove Failed = No. SABnzbd
-      variant adds URL Base `/sabnzbd`. **No remote path mappings
-      needed** — the single-`/data`-everywhere rule (Phase 7) makes
-      them unnecessary.
-- [ ] **Prowlarr sync, exact**: one-way push, Prowlarr wins conflicts;
-      it does NOT sync download clients (configure those per *arr).
-      After rebuilds, per-app sync can silently no-op on missing
-      indexers — Porthole re-syncs via
-      `POST /api/v1/command {"name":"ApplicationIndexerSync"}` and
-      verifies.
-- [ ] **The entire question budget** — the only things Porthole ever
-      asks the user, ever: 1080p vs 4K · HDR? · HD audio? · anime? ·
-      host path for /data · indexer credentials · debrid credentials ·
-      Plex vs Jellyfin · primary language (if not English). Nine
-      questions. Everything else is derived.
-- [ ] **Top-5 misconfigurations, designed out**: split bind mounts
-      (single `/data` enforced + hardlink smoke test); hand-editing
-      synced profiles (managed profiles not presented as editable);
-      wrong Prowlarr resync (Porthole re-syncs + verifies); substring
-      blocklist terms (`TS` blocks "Jujutsu" — use regex `\bts\b` or
-      CFs, never substrings); Decypharr user/pass left blank (always
-      arr URL + API key).
+**Shipped 2026-10-07** (10/10). Two honest deviations from the
+research plan, both verified before building:
+
+- **One question, not four.** The research proposed 1080p/4K, HDR,
+  HD-audio, and anime. Verification showed the UHD profiles already
+  encode optimal HDR/audio custom-format scores, and anime naming is
+  always applied (`episodes.anime: default`). Asking the other three
+  would be theater, not configuration — so Porthole asks only
+  "1080p or 4K?" in the Setup wizard.
+- **One-shot job, not a scheduled container.** Configarr runs as
+  `docker run --rm` on the fleet's `media-network` (a) automatically
+  as the last provisioning step, and (b) on demand via Care. A
+  standing schedule would silently revert hand-edits on a timer;
+  the explicit re-run keeps that behavior visible and chosen.
+  Scheduled sync is deferred to Phase 10 if users ask for it.
+
+- [x] **Configarr config generated natively** (`src/configarr.rs`):
+      `config.yml` + `secrets.yml` from the quality answer. Template
+      IDs verified against recyclarr/config-templates `templates.json`
+      (Oct 2026): Sonarr `web-1080p`/`web-2160p`, Radarr
+      `hd-bluray-web`/`uhd-bluray-web`. Naming always TRaSH `default`
+      (standard/daily/anime). Secrets file written `0600`.
+- [x] **TRaSH 2026 profiles applied**: via the templates above —
+      quality definitions, profiles, custom-format groups, and scores
+      all come from TRaSH-Guides through Configarr. No hand-maintained
+      profile JSON in Porthole.
+- [x] **Exact TRaSH naming applied**: `media_naming` set to TRaSH
+      `default` for Sonarr (series/season/standard/daily/anime,
+      rename on) and Radarr (folder/movie, rename on).
+- [x] **Decypharr wiring, exact** (`src/arr.rs`): the installer
+      already wires it on setup; Porthole **verifies** (Doctor
+      "Download client" check) and **re-wires** (one-key fix + Care).
+      Payload byte-mirrors the installer: QBittorrent mock, host
+      `decypharr:8282`, username = the *arr's own URL
+      (`http://sonarr:8989`), password = the *arr's API key,
+      category `sonarr`/`radarr`, Remove Completed = Yes.
+      (Research said Remove Failed = No and SABnzbd type; the
+      installer's live code uses QBittorrent mock + Remove Failed =
+      Yes — Porthole matches the proven working config.)
+- [x] **Prowlarr sync, exact** (`src/arr.rs::prowlarr_resync`):
+      re-syncs via `POST /api/v1/command
+      {"name":"ApplicationIndexerSync"}` and verifies Prowlarr has
+      indexers to push. Runs automatically after every Configarr sync.
+- [x] **The entire question budget** — the only things Porthole ever
+      asks the user, ever: 1080p vs 4K · host path for /data ·
+      indexer credentials · debrid credentials · Plex vs Jellyfin ·
+      primary language (if not English). **Seven** questions
+      (was nine). Everything else is derived.
+- [x] **Top-5 misconfigurations, designed out**: hand-editing synced
+      profiles (Configarr reverts; Care warns before running);
+      wrong Prowlarr resync (Porthole re-syncs + verifies);
+      substring blocklist terms (TRaSH CFs, never substrings);
+      Decypharr user/pass left blank (always arr URL + API key,
+      verified by Doctor). Split bind mounts → Phase 7.
 - [ ] Lidarr note: TRaSH guidance for music is community-grade
       (Davo guide, FLAC-first) with experimental Configarr support —
       ship with conservative defaults, mark experimental in the UI.
+      (Deferred to Phase 7 fleet expansion, which adds Lidarr itself.)
 
 ## Phase 7 — Fleet expansion: music, subtitles, sports
 

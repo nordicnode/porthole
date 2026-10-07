@@ -405,16 +405,41 @@ fn render_prefs(f: &mut Frame, app: &App, area: Rect) {
             s == 5,
             false,
         ),
+        ListItem::new(Text::from(vec![
+            Line::from(vec![
+                Span::styled(
+                    if s == 6 { "▸ " } else { "  " },
+                    Style::default().fg(ACCENT),
+                ),
+                Span::styled(
+                    format!("{:<14}", "Quality"),
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("< {} >", if p.quality_4k { "4K" } else { "1080p" }),
+                    Style::default().fg(ACCENT),
+                ),
+            ]),
+            Line::from(vec![
+                Span::raw("    "),
+                Span::styled(
+                    "Space / ← → to switch. 4K needs ~60 Mbps to stream smoothly.",
+                    Style::default().fg(DIM),
+                ),
+            ]),
+        ])),
         ListItem::new(Line::from(vec![
             Span::styled(
-                if s == 6 { "▸ " } else { "  " },
+                if s == 7 { "▸ " } else { "  " },
                 Style::default().fg(ACCENT),
             ),
             Span::styled(
                 "[ Review the plan → ]",
                 Style::default()
-                    .fg(if s == 6 { Color::Black } else { GOOD })
-                    .bg(if s == 6 { GOOD } else { Color::Reset })
+                    .fg(if s == 7 { Color::Black } else { GOOD })
+                    .bg(if s == 7 { GOOD } else { Color::Reset })
                     .add_modifier(Modifier::BOLD),
             ),
         ])),
@@ -426,7 +451,7 @@ fn render_prefs(f: &mut Frame, app: &App, area: Rect) {
         .split(area);
 
     let list = List::new(rows).block(title_block(
-        "Three questions — Porthole does the hundred tiny configurations",
+        "A few questions — Porthole does the hundred tiny configurations",
     ));
     f.render_widget(list, chunks[0]);
 

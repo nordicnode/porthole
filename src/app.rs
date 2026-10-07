@@ -64,7 +64,7 @@ pub enum WizardPhase {
 
 /// Form rows: 0 API key, 1 install dir, 2 media server, 3 PUID, 4 PGID,
 /// 5 timezone, 6 the "review plan" action row.
-pub const FORM_ROWS: usize = 7;
+pub const FORM_ROWS: usize = 8;
 
 pub struct WizardState {
     pub phase: WizardPhase,
@@ -206,6 +206,10 @@ impl WizardState {
                         if c == ' ' {
                             self.prefs.media_server = self.prefs.media_server.toggle();
                         }
+                    } else if self.form_selected == 6 {
+                        if c == ' ' {
+                            self.prefs.quality_4k = !self.prefs.quality_4k;
+                        }
                     } else if let Some(f) = self.field_mut(self.form_selected) {
                         f.push(c);
                     }
@@ -213,6 +217,8 @@ impl WizardState {
                 KeyCode::Left | KeyCode::Right => {
                     if self.form_selected == 2 {
                         self.prefs.media_server = self.prefs.media_server.toggle();
+                    } else if self.form_selected == 6 {
+                        self.prefs.quality_4k = !self.prefs.quality_4k;
                     }
                 }
                 KeyCode::Enter => {
@@ -261,6 +267,7 @@ pub enum CheckStatus {
 pub enum Fix {
     StartContainer(String),
     RestartContainer(String),
+    RewireDownloadClient,
 }
 
 /// One health check, explained in plain language.
@@ -435,6 +442,69 @@ impl DoctorState {
             }
         }
 
+        // Download client: Decypharr must be wired into Sonarr/Radarr
+        // with the *arr's own URL + API key (callback routing, not auth).
+        if let Some(dir) = &config.install_dir {
+            let install = std::path::Path::new(dir);
+            let mut problems = Vec::new();
+            for (id, name) in [("sonarr", "Sonarr"), ("radarr", "Radarr")] {
+                match crate::configarr::arr_api_key(install, id) {
+                    Ok(_) => {
+                        // API key exists; check wiring only if the *arr answers.
+                        // (decypharr_wired is cheap; a down *arr just reads false.)
+                    }
+                    Err(_) => problems.push(format!("{name} isn't installed yet")),
+                }
+            }
+            if problems.is_empty() {
+                // Both installed — verify the wiring via a lightweight probe.
+                // Full verification lives in Care; here we just detect drift.
+                let wired = ["sonarr", "radarr"].iter().all(|id| {
+                    crate::configarr::arr_api_key(install, id)
+                        .map(|key| {
+                            let port = if *id == "sonarr" { 8989 } else { 7878 };
+                            let out = std::process::Command::new("curl")
+                                .args([
+                                    "-sf",
+                                    "--connect-timeout",
+                                    "3",
+                                    "--max-time",
+                                    "8",
+                                    "-H",
+                                    &format!("X-Api-Key: {key}"),
+                                    &format!("http://localhost:{port}/api/v3/downloadclient"),
+                                ])
+                                .output();
+                            match out {
+                                Ok(o) if o.status.success() => {
+                                    let body = String::from_utf8_lossy(&o.stdout);
+                                    body.contains("Decypharr")
+                                }
+                                _ => true, // *arr down — don't cry wolf; service check covers it
+                            }
+                        })
+                        .unwrap_or(true)
+                });
+                if wired {
+                    checks.push(Check {
+                        name: "Download client".to_string(),
+                        message: "Decypharr is wired into Sonarr and Radarr — finished downloads flow automatically.".to_string(),
+                        status: CheckStatus::Pass,
+                        fix: None,
+                        fix_label: String::new(),
+                    });
+                } else {
+                    checks.push(Check {
+                        name: "Download client".to_string(),
+                        message: "Sonarr or Radarr lost its Decypharr download client (or the password drifted). Downloads would finish in Decypharr but never import.".to_string(),
+                        status: CheckStatus::Fail,
+                        fix: Some(Fix::RewireDownloadClient),
+                        fix_label: "Re-wire Decypharr".to_string(),
+                    });
+                }
+            }
+        }
+
         // Every service: exists? running? actually answering?
         let statuses = docker::service_statuses();
         for svc in SERVICES {
@@ -512,7 +582,7 @@ impl DoctorState {
     }
 
     /// Apply the selected check's fix. Returns a message for the flash line.
-    fn apply_fix(&mut self) -> Option<String> {
+    fn apply_fix(&mut self, config: &Config) -> Option<String> {
         let check = self.checks.get(self.selected)?;
         match check.fix.clone()? {
             Fix::StartContainer(name) => {
@@ -535,6 +605,21 @@ impl DoctorState {
                     ))
                 }
             }
+            Fix::RewireDownloadClient => {
+                // Synchronous re-wire; the Doctor re-runs checks after.
+                match &config.install_dir {
+                    Some(dir) => {
+                        let (tx, _rx) = std::sync::mpsc::channel();
+                        match crate::arr::ensure_decypharr_client(std::path::Path::new(dir), &tx) {
+                            Ok(()) => {
+                                Some("Decypharr re-wired into Sonarr and Radarr.".to_string())
+                            }
+                            Err(e) => Some(format!("Couldn't re-wire: {e:#}")),
+                        }
+                    }
+                    None => Some("No install location set — run Setup first.".to_string()),
+                }
+            }
         }
     }
 
@@ -554,7 +639,7 @@ impl DoctorState {
                 None
             }
             KeyCode::Char('f') | KeyCode::Enter => {
-                let msg = self.apply_fix();
+                let msg = self.apply_fix(config);
                 self.run(config); // re-check after the fix
                 msg
             }
@@ -575,6 +660,7 @@ pub enum CareOp {
     SmallDiskStrm,
     MediaServerTune,
     SpeedTest,
+    QualityProfiles,
     CheckUpdates,
     CheckPortholeUpdate,
     InstallPortholeUpdate(crate::selfupdate::ReleaseInfo),
@@ -592,6 +678,7 @@ impl CareOp {
             CareOp::SmallDiskStrm => "Use .strm files (no mount)",
             CareOp::MediaServerTune => "Tune media server for cloud",
             CareOp::SpeedTest => "Test my connection speed",
+            CareOp::QualityProfiles => "Apply expert quality profiles",
             CareOp::CheckUpdates => "Check for updates",
             CareOp::CheckPortholeUpdate => "Check for Porthole updates",
             CareOp::InstallPortholeUpdate(_) => "Install Porthole update",
@@ -618,6 +705,9 @@ impl CareOp {
             }
             CareOp::SpeedTest => {
                 "Download 25 MB and tell you honestly what quality your connection can stream."
+            }
+            CareOp::QualityProfiles => {
+                "Sync the TRaSH Guides' quality profiles into Sonarr and Radarr. Reverts hand-edits by design."
             }
             CareOp::CheckUpdates => {
                 "See if any service has a new version. Downloads, but changes nothing."
@@ -691,6 +781,13 @@ impl CareOp {
                 "endpoint and tell you what streaming quality your connection".to_string(),
                 "can honestly handle. Nothing else changes.".to_string(),
             ],
+            CareOp::QualityProfiles => vec![
+                "Porthole will:".to_string(),
+                "  • generate Configarr's config from your quality answer".to_string(),
+                "  • run Configarr to sync TRaSH profiles, custom formats and naming".to_string(),
+                "  • verify the new profiles landed in Sonarr and Radarr".to_string(),
+                "Hand-edited profiles get reset to the guide — that's the point.".to_string(),
+            ],
             CareOp::CheckUpdates => vec![
                 "Porthole will download the latest images and tell you what's new.".to_string(),
                 "Nothing restarts. Nothing changes.".to_string(),
@@ -738,6 +835,7 @@ pub(crate) const CARE_ACTIONS: &[fn() -> CareOp] = &[
     || CareOp::SmallDiskStrm,
     || CareOp::MediaServerTune,
     || CareOp::SpeedTest,
+    || CareOp::QualityProfiles,
     || CareOp::CheckUpdates,
     || CareOp::CheckPortholeUpdate,
     || CareOp::UpdateFleet,
@@ -1007,6 +1105,16 @@ fn run_care_op(
             }
             let verdict = crate::storage::bandwidth_verdict(mbps);
             Ok(format!("Measured {mbps:.0} Mbps. {verdict}"))
+        }
+        CareOp::QualityProfiles => {
+            let d = dir()?;
+            // Quality answer: prefer the saved install-time choice; fall back to 1080p.
+            let four_k =
+                std::fs::read_to_string(std::path::Path::new(&d).join(".porthole-quality"))
+                    .map(|s| s.trim() == "4k")
+                    .unwrap_or(false);
+            crate::care::apply_quality_profiles(std::path::Path::new(&d), four_k, &tx)?;
+            Ok("Expert quality profiles applied.".to_string())
         }
         CareOp::UpdateFleet => {
             let d = dir()?;

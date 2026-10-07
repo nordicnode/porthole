@@ -687,6 +687,124 @@ pub fn apply_media_server_settings(install_dir: &Path, tx: &Sender<CareEvent>) -
     }
 }
 
+/// Apply expert quality profiles: generate Configarr's config from the
+/// user's quality answer and run Configarr as a one-shot Docker job on the
+/// fleet's network. Idempotent — re-running reverts hand-edits.
+pub fn apply_quality_profiles(
+    install_dir: &Path,
+    four_k: bool,
+    tx: &Sender<CareEvent>,
+) -> Result<()> {
+    let log = |s: &str| {
+        let _ = tx.send(CareEvent::Log(s.to_string()));
+    };
+
+    // API keys live in the *arr config.xml files.
+    let sonarr_key =
+        crate::configarr::arr_api_key(install_dir, "sonarr").map_err(|e| anyhow::anyhow!("{e}"))?;
+    let radarr_key =
+        crate::configarr::arr_api_key(install_dir, "radarr").map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    // Write Configarr's config where the job will mount it.
+    let cfg_dir = install_dir.join("configs/configarr");
+    std::fs::create_dir_all(&cfg_dir).context("creating configarr config dir")?;
+    std::fs::write(
+        cfg_dir.join("config.yml"),
+        crate::configarr::render_config_yml(four_k),
+    )
+    .context("writing config.yml")?;
+    std::fs::write(
+        cfg_dir.join("secrets.yml"),
+        crate::configarr::render_secrets_yml(&sonarr_key, &radarr_key),
+    )
+    .context("writing secrets.yml")?;
+    // Secrets file: owner-only.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(
+            cfg_dir.join("secrets.yml"),
+            std::fs::Permissions::from_mode(0o600),
+        );
+    }
+    log(&format!(
+        "[ok] quality profiles configured for {}",
+        if four_k { "4K" } else { "1080p" }
+    ));
+
+    // Pull and run Configarr as a one-shot job on the fleet network.
+    log("[in] pulling Configarr…");
+    let pull = Command::new("docker")
+        .args(["pull", crate::configarr::IMAGE])
+        .output()
+        .map_err(|e| anyhow::anyhow!("could not run docker pull: {e}"))?;
+    if !pull.status.success() {
+        anyhow::bail!("could not pull the Configarr image — check your connection");
+    }
+    log("[in] syncing TRaSH quality profiles into Sonarr/Radarr…");
+    log("     (this takes a minute; Configarr is talking to both *arrs)");
+    let out = Command::new("docker")
+        .args([
+            "run",
+            "--rm",
+            "--network",
+            crate::configarr::NETWORK,
+            "-v",
+            &format!("{}:/app/config", cfg_dir.to_string_lossy()),
+            crate::configarr::IMAGE,
+        ])
+        .output()
+        .map_err(|e| anyhow::anyhow!("could not run Configarr: {e}"))?;
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    for line in stdout.lines().chain(stderr.lines()) {
+        // Redact API keys if they leak into logs.
+        let line = line
+            .replace(&sonarr_key, "[redacted]")
+            .replace(&radarr_key, "[redacted]");
+        log(&format!("  │ {line}"));
+    }
+    if !out.status.success() {
+        anyhow::bail!("Configarr reported errors — see the log above");
+    }
+
+    // Re-assert the two integrations Configarr doesn't own: the Decypharr
+    // download client in each *arr, and Prowlarr's indexer sync.
+    log("[in] verifying the download-client wiring…");
+    crate::arr::ensure_decypharr_client(install_dir, tx)?;
+    crate::arr::prowlarr_resync(install_dir, tx)?;
+
+    // Verify: the TRaSH profile should now exist in each *arr.
+    for (name, port, key) in [("Sonarr", 8989, &sonarr_key), ("Radarr", 7878, &radarr_key)] {
+        let profiles = Command::new("curl")
+            .args([
+                "-sf",
+                "--connect-timeout",
+                "5",
+                "--max-time",
+                "15",
+                "-H",
+                &format!("X-Api-Key: {key}"),
+                &format!("http://localhost:{port}/api/v3/qualityprofile"),
+            ])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+            .unwrap_or_default();
+        // TRaSH profiles are named like "WEB-1080p", "HD Bluray + WEB".
+        let want = if four_k { "2160p" } else { "1080p" };
+        if profiles.contains(want) {
+            log(&format!("[ok] {name}: quality profiles synced"));
+        } else {
+            log(&format!(
+                "[warn] {name}: couldn't confirm the new profiles — check its UI"
+            ));
+        }
+    }
+    log("[ok] expert quality profiles applied. They'll survive updates;");
+    log("     re-run this if you ever hand-edit a profile and want it reset.");
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
