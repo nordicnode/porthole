@@ -120,6 +120,17 @@ Two facts shape everything:
    abstraction with per-app categories. Adding a Servarr app is mostly
    wiring, not invention.
 
+And one red flag that reshapes provider choice:
+
+3. **TorBox's July 2026 TOS overhaul.** TorBox is now operated by an
+   opaque UAE free-zone entity (Anonymous Systems FZ-LLC, billing via
+   Delaware ReAnonymous LLC); the new terms push 100% liability to
+   users and require consent to session-replay telemetry, device IDs
+   and IP geolocation, with broad "governmental request" disclosure.
+   Reliability is also reported declining. Porthole must not hard-code
+   TorBox as the only debrid — provider choice becomes a first-class
+   wizard question (see Phase 8).
+
 ## Phase 5 — Fleet expansion: music, subtitles, sports
 
 The three highest-value, lowest-risk additions. All actively maintained;
@@ -202,27 +213,59 @@ ZFS AnyRAID for mixed-capacity redundancy, still roadmap-stage).
 - [ ] Doctor gains storage checks: mount answering? pool healthy?
       parity in sync? All in plain language.
 
-## Phase 8 — Download choice: beyond debrid-only
+## Phase 8 — Download choice: providers, privacy, and beyond debrid-only
 
-Debrid stays the default (it's the whole point of the TorBox stack),
-but some users want local downloading: private trackers, seeding,
-or no debrid subscription. This phase makes it a first-class choice,
-not a fork.
+Debrid stays the default path, but *which* debrid — and how private the
+whole thing is — becomes a first-class choice. Researched October 2026.
 
+**Debrid provider choice** (all five integrate with Decypharr via API
+key, so swapping is a config change, not a rebuild):
+
+- [ ] Wizard asks which debrid: **Premiumize** (recommended — bundles
+      debrid + cloud + Usenet + VPN, excellent API; watch the point-based
+      fair use under heavy *arr automation), **AllDebrid** (budget pick),
+      **TorBox** (current default, kept for continuity — but the July
+      2026 TOS overhaul and declining reliability are disclosed honestly
+      in the wizard), **Debrid-Link** (built-in seeding), **Real-Debrid**
+      (fallback only — keyword copyright filter since May 2026 broke
+      50–70% of cached mainstream 4K; strict single-IP enforcement).
+- [ ] No service has an official Sonarr/Radarr plugin; Decypharr remains
+      the multi-provider standard. Porthole pins a Decypharr build with
+      the TorBox fixes (community forks carry unmerged patches).
+
+**The privacy stack** — what the ISP can and cannot see, in plain
+language on screen:
+
+- [ ] **The local-download privacy profile**: **gluetun** as the Docker
+      VPN gateway (still the 2026 standard) — qBittorrent/SABnzbd/Prowlarr
+      ride `network_mode: service:gluetun`; kill switch is gluetun's
+      built-in firewall (on by default); qBittorrent additionally bound
+      to the VPN interface as a second layer. VPN picks, verified
+      torrent-friendly with port forwarding: **PIA** or **Proton VPN**
+      (Mullvad is private but dropped port forwarding — worse for
+      seeding; Nord/Surfshark/Express have none). Plex/Jellyfin/Seerr
+      stay OFF the VPN.
+- [ ] **Honest guidance Porthole gives**: Usenet-over-SSL and debrid-over-
+      HTTPS already blind the ISP to *content* (it sees only encrypted
+      sessions, endpoints, timing, volume — no swarm, no harvestable
+      IPs); a VPN on top hides *which* provider you use. **WARP is not a
+      VPN replacement** — it encrypts transit from the ISP but Cloudflare
+      sees everything, with ~2yr retention and no location choice.
+      Porthole says this plainly instead of offering a WARP toggle.
 - [ ] **Fleet profiles in the wizard**: *Debrid (recommended)* vs
-      *Usenet + Torrent (self-downloaded)* vs *Hybrid*. One question,
-      everything downstream rewires.
-- [ ] **SABnzbd 5.x** — the default NZB client (best *arr integration,
-      category support). The nzbget.com community fork as the
-      lightweight alternative (original NZBGet is discontinued —
-      never ship the dead repo).
-- [ ] **qBittorrent 5.x** — the default torrent client (native
-      categories the *arrs' import logic assumes). Transmission/Deluge
-      only if a user brings their own.
-- [ ] Wiring: *arr download-client entries point at the real clients
-      instead of Decypharr's mocks; categories (`sonarr`, `radarr`,
-      `lidarr`…) configured automatically; **autobrr** as the optional
-      power-user add for private-tracker racing.
+      *Usenet + Torrent (self-downloaded, VPN-routed)* vs *Hybrid*. One
+      question, everything downstream rewires: *arr download clients
+      point at Decypharr's mocks or the real clients; categories
+      (`sonarr`, `radarr`, `lidarr`…) configured automatically.
+- [ ] **SABnzbd 5.x** — the default NZB client (best *arr integration).
+      The nzbget.com community fork as the lightweight alternative
+      (original NZBGet is discontinued — never ship the dead repo).
+- [ ] **qBittorrent 5.x** — the default torrent client (native categories
+      the *arrs' import logic assumes). Transmission/Deluge only if a
+      user brings their own.
+- [ ] **autobrr** as the optional power-user add for private-tracker
+      racing; **seedboxes** documented as the heavy-seeding alternative
+      (largely redundant if you already pay for debrid).
 
 ## Explicitly deferred — researched, not planned
 
