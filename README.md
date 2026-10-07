@@ -77,9 +77,10 @@ Works over SSH — it's a TUI, so it runs wherever your server lives.
   extras) → dry-run plan → real provisioning with live logs
 - **Wiring**: the integration map — every connection, in plain words
 - **Doctor**: plain-language health checks with one-key fixes
-- **Care**: timestamped backups, one-key updates with automatic rollback,
-  config regeneration, small-disk mode, cloud storage setup, VPN setup,
-  clean uninstall, Porthole self-updates (checksum-verified)
+- **Care**: timestamped backups (manual or daily scheduled), one-key updates
+  with automatic rollback, config regeneration, small-disk mode, cloud
+  storage setup, VPN setup, clean uninstall, Porthole self-updates
+  (checksum-verified)
 - **Extras**: Lidarr, Bazarr, Sportarr, autobrr + 8 companion apps
   (Unpackerr, Cleanuparr, Maintainerr, Janitorr, Tautulli, Jellystat,
   Wizarr, Kometa)
