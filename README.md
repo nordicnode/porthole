@@ -4,19 +4,21 @@
 
 **Your self-hosted media fleet, through one window.**
 
-Automated setup *and* seamless integration for TorBox, Decypharr, Prowlarr,
-Byparr, Sonarr, Radarr, Seerr, Plex and Jellyfin — with no expert knowledge
-required.
+Automated setup *and* seamless integration for your entire media fleet —
+TorBox, Decypharr, Prowlarr, Byparr, Sonarr, Radarr, Lidarr, Bazarr, Sportarr,
+Seerr, Plex, Jellyfin, download clients, VPN, cloud storage, and companion
+automation — with no expert knowledge required.
 
 [![CI](https://github.com/nordicnode/porthole/actions/workflows/ci.yml/badge.svg)](https://github.com/nordicnode/porthole/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 </div>
 
-> Nine apps make a great media server — but only if they talk to each other.
+> Dozens of apps make a great media server — but only if they talk to each other.
 > Porthole installs them, then **introduces them to each other**: search
-> sources shared, downloads handed off, libraries created, requests connected.
-> You answer three questions; Porthole does the hundred tiny configurations.
+> sources shared, downloads handed off, libraries created, requests connected,
+> subtitles fetched, music organized, cloud storage mounted.
+> You answer a few questions; Porthole does the hundred tiny configurations.
 
 ## The idea
 
@@ -26,17 +28,17 @@ terminal UI that turns that stack into a *product* — one that a non-expert
 can set up and run.
 
 The core insight: **setup is 20% of the value, integration is 80%.** Anyone
-can `docker compose up` nine containers. The hard part is the wiring in
+can `docker compose up` thirty containers. The hard part is the wiring in
 between — API keys synced, indexers shared, download clients assigned,
-libraries created. Porthole does all of it, and shows you the wiring map so
-you can see (and trust) what was connected.
+libraries created, VPN routed, cloud storage mounted. Porthole does all of it,
+and shows you the wiring map so you can see (and trust) what was connected.
 
 ## Screens
 
 | View | What it does |
 |------|--------------|
 | **Fleet** (`1`) | Every service at a glance with **live Docker status** — `s`/`x`/`R` to start/stop/restart |
-| **Setup** (`2`) | Guided wizard: 3 questions → dry-run plan → real provisioning with live logs |
+| **Setup** (`2`) | Guided wizard: preferences → dry-run plan → real provisioning with live logs |
 | **Wiring** (`3`) | The integration map — every connection Porthole makes, in plain words |
 | **Doctor** (`4`) | Fleet health checks in plain language, with one-key fixes |
 | **Care** (`5`) | Backups, one-key updates with automatic rollback, config regeneration, clean uninstall, Porthole self-updates |
@@ -49,7 +51,7 @@ you can see (and trust) what was connected.
 cargo run --release
 ```
 
-Or grab the latest release (a single 2MB binary, no dependencies):
+Or grab the latest release (a single ~2MB binary, no dependencies):
 
 ```bash
 curl -fsSL -o porthole.tar.gz \
@@ -68,10 +70,22 @@ Works over SSH — it's a TUI, so it runs wherever your server lives.
 
 ## Project status
 
-**Phase 4 — polish & packaging** (current): first-run welcome, `porthole
---version`, self-updating binary (checksum-verified, daily background check),
-and release CI that publishes a 2MB tarball on every version tag.
-See [ROADMAP.md](ROADMAP.md) for the full journey.
+**v0.2.0** — all ten build phases complete, plus a production-readiness audit:
+
+- **Fleet**: live Docker status, start/stop/restart per service
+- **Setup**: guided wizard (media server, debrid provider, download profile,
+  extras) → dry-run plan → real provisioning with live logs
+- **Wiring**: the integration map — every connection, in plain words
+- **Doctor**: plain-language health checks with one-key fixes
+- **Care**: timestamped backups, one-key updates with automatic rollback,
+  config regeneration, small-disk mode, cloud storage setup, VPN setup,
+  clean uninstall, Porthole self-updates (checksum-verified)
+- **Extras**: Lidarr, Bazarr, Sportarr, autobrr + 8 companion apps
+  (Unpackerr, Cleanuparr, Maintainerr, Janitorr, Tautulli, Jellystat,
+  Wizarr, Kometa)
+- **Storage**: rclone cloud mounts with encryption, automatic uploads,
+  hardlink verification
+- **Privacy**: VPN-routed downloads (gluetun), debrid provider choice
 
 ## License
 
