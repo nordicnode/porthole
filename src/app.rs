@@ -1787,3 +1787,32 @@ impl App {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn text_rows_match_field_mut() {
+        // is_text_row and field_mut must agree on which rows are text inputs.
+        // If they drift, typing in a field could trigger global shortcuts (or vice versa).
+        let mut w = WizardState::new();
+        for row in 0..20 {
+            let is_text = WizardState::is_text_row(row);
+            let has_field = w.field_mut(row).is_some();
+            assert_eq!(
+                is_text, has_field,
+                "row {row}: is_text_row={is_text} but field_mut={has_field}"
+            );
+        }
+    }
+
+    #[test]
+    fn text_input_only_in_prefs_phase() {
+        let mut w = WizardState::new();
+        w.form_selected = 0; // text row
+        assert!(w.is_text_input());
+        w.phase = WizardPhase::Plan;
+        assert!(!w.is_text_input());
+    }
+}
