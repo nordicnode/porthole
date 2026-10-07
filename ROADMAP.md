@@ -190,28 +190,84 @@ to the fleet.
       users; skip entirely on Jellyfin (no equivalent). Optional,
       Plex-profile only.
 
-## Phase 7 — Storage: your drives, your cloud
+## Phase 7 — Storage: your drives, your cloud, encrypted
 
-The user asked about FUSE mounts, rclone, GDrive/Dropbox mounting.
-Research verdict: **rclone mount is still the standard** for cloud
-storage; **mergerfs 2.42.x is still the standard local pooler**
-(usually + SnapRAID parity). No disruption on the horizon (watch:
-ZFS AnyRAID for mixed-capacity redundancy, still roadmap-stage).
+The user asked about FUSE mounts, rclone, GDrive/Dropbox mounting —
+then about downloading locally and pushing to remote storage
+automatically, privately. Researched October 2026. Verdicts:
+**rclone mount is still the standard** for cloud storage;
+**mergerfs is still the standard local pooler** (usually + SnapRAID
+parity); **cloudplow is effectively dead** (no commits since Aug 2023,
+no blessed successor — its feature set is a checklist to reimplement
+natively). No disruption on the horizon (watch: ZFS AnyRAID for
+mixed-capacity redundancy, still roadmap-stage).
 
-- [ ] **rclone mounts, guided**: Google Drive, Dropbox, OneDrive —
-      Porthole walks through `rclone authorize` once, then writes the
-      mount config with media-tuned VFS cache presets (`--vfs-cache-mode
+**Mounts & pooling:**
+
+- [ ] **rclone mounts, guided**: Google Drive, pCloud, Dropbox —
+      Porthole walks through authorization once, then writes the mount
+      config with media-tuned VFS cache presets (`--vfs-cache-mode
       full`, Plex/Jellyfin-friendly chunk/buffer sizes). No flags for
       the user to learn.
+- [ ] **Bring-your-own Google OAuth, automated**: rclone's shared
+      Google client_id is being retired during 2026 — every new setup
+      needs its own Google Cloud OAuth client (and it must be
+      "Published" or refresh tokens die in 7 days). Porthole walks the
+      user through creating it once, then stores it. This is exactly
+      the kind of expert-knowledge trap Porthole exists to remove.
 - [ ] **mergerfs pooling**: combine local drives into one mount with
       individually readable disks; optional SnapRAID parity. Wiring:
       the pool becomes the single path Plex/Jellyfin and the *arrs see.
 - [ ] **The debrid shortcut**: Decypharr already exposes the debrid cloud
-      as WebDAV/NFSv4/SMB — Porthole should present this as the
-      zero-config storage option ("your TorBox cloud as a drive"),
-      with rclone/mergerfs as the bring-your-own-hardware path.
+      as WebDAV/NFSv4/SMB — Porthole presents this as the zero-config
+      storage option ("your debrid cloud as a drive"), with
+      rclone/mergerfs as the bring-your-own-hardware path.
+- [ ] **Provider matrix, honest**: pCloud has the best media profile in
+      2026 (no file cap, fastest uploads, lifetime plans); Google Drive
+      works but enforces 750 GB/day uploads and 5 TB max files;
+      Dropbox's ~3 TB plan ceiling is too small for libraries; OneDrive
+      not recommended. rclone crypt covers all of them regardless.
+
+**The encrypted upload pipeline** (download local → archive to cloud):
+
+- [ ] **Scheduled, lock-guarded `rclone move`** (systemd timer, every
+      15–60 min) — still the 2026 standard; poll-driven beats
+      event-driven on reliability. Flags that matter: `--min-age`,
+      `--delete-empty-src-dirs`, `--drive-stop-on-upload-limit`,
+      partial-file excludes. Porthole implements the mover natively;
+      event triggers stay manual/advanced.
+- [ ] **rclone crypt ON by default**: client-side encryption before
+      anything touches the cloud (scrypt + NaCl SecretBox — not
+      AES-256, despite what guides claim). The provider sees ciphertext
+      and metadata only; without it, Drive actively scans and blocks
+      policy-violating files. Porthole enforces password+salt backup
+      (lose it = unrecoverable, wrong password = silently empty
+      folders) and asserts filename *and* directory encryption.
+- [ ] **Bandwidth time-tables**: rclone's native `--bwlimit` schedule
+      (uncapped overnight, capped daytime) as the default; optional
+      "throttle while Plex/Jellyfin is streaming" via `rclone rcd`.
+      Router QoS stays manual.
+- [ ] **The hardlink smoke test** — the killer integration detail:
+      *arrs must import LOCALLY, never through an rclone mount (FUSE
+      can't hardlink; atomic moves break across filesystems). The
+      classic silent failure: separate bind mounts of the same volume
+      still fail EXDEV, and the *arr quietly falls back to full copies
+      (documented 229 GB duplicate disasters). Porthole enforces the
+      single `/data` root bind-mounted identically into every container
+      and *tests* hardlinking at install time. This is seamlessness you
+      can verify.
+
+**Privacy, end to end** (shown in plain language, not as a toggle farm):
+
+- [ ] With the VPN profile (Phase 8): ISP sees only the VPN server IP,
+      timestamps, and volume. Torrent swarm peers see the VPN IP.
+      Usenet-over-TLS hides content from the ISP with no swarm at all.
+- [ ] With rclone crypt: the cloud provider sees ciphertext + metadata
+      only (directory structure, sizes, and access times still leak —
+      Porthole says so honestly).
+- [ ] DNS goes through the VPN or encrypted DNS (DoH/DoT) — no leaks.
 - [ ] Doctor gains storage checks: mount answering? pool healthy?
-      parity in sync? All in plain language.
+      parity in sync? uploader running? All in plain language.
 
 ## Phase 8 — Download choice: providers, privacy, and beyond debrid-only
 
