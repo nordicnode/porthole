@@ -20,12 +20,14 @@ pub fn backup_dir() -> PathBuf {
 }
 
 fn timestamp() -> String {
-    // File-safe timestamp without extra deps: seconds since epoch.
-    let secs = std::time::SystemTime::now()
+    // File-safe timestamp without extra deps. Nanosecond resolution: two
+    // backups in the same second must not share a filename (they'd
+    // overwrite each other — seen in tests, would bite in production).
+    let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
+        .map(|d| d.as_nanos())
         .unwrap_or(0);
-    format!("{secs}")
+    format!("{nanos}")
 }
 
 /// Create a timestamped backup of the install dir (configs, .env, compose
@@ -498,12 +500,88 @@ pub enum CareEvent {
     UpdateAvailable(crate::selfupdate::ReleaseInfo),
 }
 
+/// Enable small-disk mode: configure Decypharr's DFS mount so the debrid
+/// cloud appears as a local filesystem, and make *arr "imports" instant
+/// symlinks that cost zero local bytes.
+///
+/// This edits the existing `configs/decypharr/config.json` in place
+/// (JSON-merged, preserving every other setting) after taking a backup.
+/// The disk cache is auto-sized from actual free disk.
+pub fn apply_small_disk_mode(install_dir: &Path, tx: &Sender<CareEvent>) -> Result<()> {
+    let log = |s: &str| {
+        let _ = tx.send(CareEvent::Log(s.to_string()));
+    };
+    let config_path = install_dir.join("configs/decypharr/config.json");
+    if !config_path.is_file() {
+        anyhow::bail!(
+            "no Decypharr config found at {} — run the Setup wizard first",
+            config_path.display()
+        );
+    }
+
+    let free = crate::storage::free_bytes(install_dir)
+        .map_err(|e| anyhow::anyhow!("could not measure free disk space: {e}"))?;
+    let cache_bytes = crate::storage::suggested_cache_bytes(free);
+    let cache_str = crate::storage::gb_string(cache_bytes);
+    log(&format!(
+        "[in] {} GB free on this disk; sizing the stream cache at {}…",
+        free / crate::storage::GB,
+        cache_str
+    ));
+
+    let map = crate::generate::read_env_file(&install_dir.join(".env"));
+    let puid: u32 = map.get("PUID").and_then(|s| s.parse().ok()).unwrap_or(1000);
+    let pgid: u32 = map.get("PGID").and_then(|s| s.parse().ok()).unwrap_or(1000);
+
+    log("[in] backing up before changing the Decypharr config…");
+    let backup = create_backup(install_dir)?;
+    log(&format!(
+        "[ok] backup saved: {}",
+        backup.file_name().unwrap_or_default().to_string_lossy()
+    ));
+
+    let raw = std::fs::read_to_string(&config_path)
+        .with_context(|| format!("reading {}", config_path.display()))?;
+    let mut cfg: serde_json::Value =
+        serde_json::from_str(&raw).context("Decypharr config.json is not valid JSON")?;
+
+    let mount = crate::generate::DecypharrMount::new(
+        "/mnt/decypharr",
+        "/cache/dfs",
+        &cache_str,
+        puid,
+        pgid,
+    );
+    cfg["mount"] = mount.to_json();
+    cfg["default_download_action"] = serde_json::json!("symlink");
+
+    let out = serde_json::to_string_pretty(&cfg).context("serializing config")?;
+    std::fs::write(&config_path, out + "\n")
+        .with_context(|| format!("writing {}", config_path.display()))?;
+
+    log("[ok] small-disk mode enabled:");
+    log("  • Decypharr now mounts the debrid cloud as a filesystem (DFS)");
+    log(&format!(
+        "  • stream cache sized at {cache_str} for this disk"
+    ));
+    log("  • new downloads are imported as symlinks — zero local bytes");
+    log("[in] restart Decypharr for the mount to take effect");
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::mpsc;
+
+    /// Serializes tests that touch the shared backup dir: backup filenames
+    /// have nanosecond timestamps, but parallel tests can still interleave
+    /// create/restore/delete on the same directory.
+    static BACKUP_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
     fn backup_and_restore_round_trip() {
+        let _guard = BACKUP_LOCK.lock().unwrap();
         let base = std::env::temp_dir().join(format!("porthole-care-test-{}", timestamp()));
         let install = base.join("stack");
         std::fs::create_dir_all(install.join("configs/sonarr")).unwrap();
@@ -537,5 +615,54 @@ mod tests {
         let plan = uninstall_plan(Path::new("/opt/fleet"));
         assert!(plan.iter().any(|l| l.contains("/opt/fleet")));
         assert!(plan.len() >= 4);
+    }
+
+    #[test]
+    fn small_disk_mode_merges_into_existing_config() {
+        let _guard = BACKUP_LOCK.lock().unwrap();
+        let base = std::env::temp_dir().join("porthole-sd-test");
+        let _ = std::fs::remove_dir_all(&base);
+        let cfg_dir = base.join("configs/decypharr");
+        std::fs::create_dir_all(&cfg_dir).unwrap();
+        std::fs::write(
+            cfg_dir.join("config.json"),
+            r#"{"username":"u","password":"p","port":"8282"}"#,
+        )
+        .unwrap();
+        std::fs::write(base.join(".env"), "PUID=1001\nPGID=1002\n").unwrap();
+
+        let (tx, _rx) = mpsc::channel();
+        let before: std::collections::HashSet<_> = list_backups().into_iter().collect();
+        apply_small_disk_mode(&base, &tx).unwrap();
+
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(cfg_dir.join("config.json")).unwrap())
+                .unwrap();
+        // Existing keys preserved.
+        assert_eq!(v["username"], "u");
+        assert_eq!(v["port"], "8282");
+        // New keys added.
+        assert_eq!(v["mount"]["type"], "dfs");
+        assert_eq!(v["mount"]["dfs"]["uid"], 1001);
+        assert_eq!(v["mount"]["dfs"]["gid"], 1002);
+        assert_eq!(v["default_download_action"], "symlink");
+        // Backup was taken — clean up only the file this test created.
+        for p in list_backups() {
+            if !before.contains(&p) {
+                std::fs::remove_file(p).ok();
+            }
+        }
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn small_disk_mode_refuses_without_config() {
+        let base = std::env::temp_dir().join("porthole-sd-missing");
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let (tx, _rx) = mpsc::channel();
+        assert!(apply_small_disk_mode(&base, &tx).is_err());
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

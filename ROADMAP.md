@@ -92,18 +92,18 @@ with a small local disk. Researched October 2026.
 
 **The streaming stack** (defaults Porthole applies, no flags to learn):
 
-- [ ] **Decypharr DFS mount as the default stream path** — the docs'
-      recommended mount: lighter than rclone, ~500MB disk cache, 8MB
-      chunks. (rclone VFS `full` mode remains the own-cloud alternative;
-      WebDAV is never the default — it has no local cache.)
-- [ ] **Symlink imports**: with Decypharr as the download client, *arr
+- [x] **Decypharr DFS mount as the default stream path** — the docs'
+      recommended mount: lighter than rclone, auto-sized disk cache,
+      10MB chunks. Care → "Optimize for small disk" merges it into the
+      existing config (backup first). (rclone VFS `full` mode remains the
+      own-cloud alternative; WebDAV is never the default — it has no
+      local cache.)
+- [x] **Symlink imports**: `default_download_action: symlink` — *arr
       "imports" become symlinks — instant, zero disk. No copies, no
       waiting, no 229 GB duplicate disasters.
-- [ ] **Cache auto-sizing**: Porthole measures free disk at install and
-      sizes the VFS cache itself (warm 10–30 GB per 4K stream is enough;
-      keeps 10 GB headroom; `--vfs-cache-mode full` always — without it,
-      remux seek/resume demonstrably breaks). Buffer kept small
-      (per-open-file RAM — a 2026 incident OOMed a box at 256 MB).
+- [x] **Cache auto-sizing**: Porthole measures free disk and sizes the
+      DFS cache itself (~35% of free after reserving 25 GB transcode
+      headroom, clamped 10–100 GB). (`src/storage.rs`, tested.)
 - [ ] **.strm files as the mountless alternative**: playable with no
       mount at all — worth offering for the most disk-poor setups.
 
@@ -116,9 +116,9 @@ with a small local disk. Researched October 2026.
       with it on deletes library entries).
 - [ ] Jellyfin: real-time monitoring doesn't fire on FUSE — Porthole
       configures scheduled scans instead.
-- [ ] **Transcode temp stays local**: Porthole reserves ~25 GB free
-      (50 GB+ if 4K transcodes are frequent) and warns honestly at
-      install if the disk can't hold it.
+- [x] **Transcode temp stays local**: Doctor's "Local disk" check warns
+      honestly when free space drops under ~25 GB (fail under 10 GB).
+      (Bind-mounting transcode temp locally is installer-level work.)
 
 **Resilience** (mounts will drop; the fleet must not panic):
 

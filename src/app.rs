@@ -350,6 +350,59 @@ impl DoctorState {
             }),
         }
 
+        // Local disk: small-disk mode needs transcode headroom.
+        match &config.install_dir {
+            Some(dir) => match crate::storage::free_bytes(std::path::Path::new(dir)) {
+                Ok(free) => {
+                    let verdict = crate::storage::DiskVerdict::from_free_bytes(free);
+                    let gb = verdict.free_gb();
+                    match verdict {
+                        crate::storage::DiskVerdict::Plenty(_) => checks.push(Check {
+                            name: "Local disk".to_string(),
+                            message: format!(
+                                "{gb} GB free — plenty of room for the stream cache and transcodes."
+                            ),
+                            status: CheckStatus::Pass,
+                            fix: None,
+                            fix_label: String::new(),
+                        }),
+                        crate::storage::DiskVerdict::Tight(_) => checks.push(Check {
+                            name: "Local disk".to_string(),
+                            message: format!(
+                                "Only {gb} GB free. Playback still works (files stream from the cloud), but 4K transcodes may run out of room."
+                            ),
+                            status: CheckStatus::Warn,
+                            fix: None,
+                            fix_label: String::new(),
+                        }),
+                        crate::storage::DiskVerdict::Critical(_) => checks.push(Check {
+                            name: "Local disk".to_string(),
+                            message: format!(
+                                "Only {gb} GB free — critically low. Free up space or playback and transcodes will fail."
+                            ),
+                            status: CheckStatus::Fail,
+                            fix: None,
+                            fix_label: String::new(),
+                        }),
+                    }
+                }
+                Err(e) => checks.push(Check {
+                    name: "Local disk".to_string(),
+                    message: format!("Couldn't measure free disk space: {e}."),
+                    status: CheckStatus::Warn,
+                    fix: None,
+                    fix_label: String::new(),
+                }),
+            },
+            None => checks.push(Check {
+                name: "Local disk".to_string(),
+                message: "No install location set, so disk space can't be checked yet.".to_string(),
+                status: CheckStatus::Warn,
+                fix: None,
+                fix_label: String::new(),
+            }),
+        }
+
         // Every service: exists? running? actually answering?
         let statuses = docker::service_statuses();
         for svc in SERVICES {
@@ -476,6 +529,7 @@ pub enum CareOp {
     Backup,
     Restore(PathBuf),
     RegenConfigs,
+    SmallDisk,
     CheckUpdates,
     CheckPortholeUpdate,
     InstallPortholeUpdate(crate::selfupdate::ReleaseInfo),
@@ -489,6 +543,7 @@ impl CareOp {
             CareOp::Backup => "Back up now",
             CareOp::Restore(_) => "Restore a backup",
             CareOp::RegenConfigs => "Regenerate configs",
+            CareOp::SmallDisk => "Optimize for small disk",
             CareOp::CheckUpdates => "Check for updates",
             CareOp::CheckPortholeUpdate => "Check for Porthole updates",
             CareOp::InstallPortholeUpdate(_) => "Install Porthole update",
@@ -503,6 +558,9 @@ impl CareOp {
             CareOp::Restore(_) => "Bring back a snapshot. Your fleet returns to exactly how it was.",
             CareOp::RegenConfigs => {
                 "Rewrite all config files with Porthole's native generator. Fixes corrupted configs; secrets are preserved."
+            }
+            CareOp::SmallDisk => {
+                "Mount the debrid cloud as a filesystem and make imports instant symlinks. Your library lives remotely; this disk only holds a small stream cache."
             }
             CareOp::CheckUpdates => {
                 "See if any service has a new version. Downloads, but changes nothing."
@@ -545,6 +603,15 @@ impl CareOp {
                 "  • take a backup first".to_string(),
                 "  • rewrite .env, the Decypharr config and the three *arr configs".to_string(),
                 "  • keep your existing API keys and passwords".to_string(),
+            ],
+            CareOp::SmallDisk => vec![
+                "Porthole will:".to_string(),
+                "  • take a backup first".to_string(),
+                "  • turn on Decypharr's DFS mount (the debrid cloud appears as a folder)"
+                    .to_string(),
+                "  • size the stream cache from your actual free disk space".to_string(),
+                "  • make new downloads import as symlinks — zero local bytes".to_string(),
+                "Restart Decypharr afterwards for the mount to take effect.".to_string(),
             ],
             CareOp::CheckUpdates => vec![
                 "Porthole will download the latest images and tell you what's new.".to_string(),
@@ -589,6 +656,7 @@ pub(crate) const CARE_ACTIONS: &[fn() -> CareOp] = &[
     || CareOp::Backup,
     || CareOp::Restore(PathBuf::new()), // placeholder → backup picker
     || CareOp::RegenConfigs,
+    || CareOp::SmallDisk,
     || CareOp::CheckUpdates,
     || CareOp::CheckPortholeUpdate,
     || CareOp::UpdateFleet,
@@ -824,6 +892,11 @@ fn run_care_op(
                 let names: Vec<_> = updates.iter().map(|u| u.service.clone()).collect();
                 format!("Updates available for: {}", names.join(", "))
             })
+        }
+        CareOp::SmallDisk => {
+            let d = dir()?;
+            crate::care::apply_small_disk_mode(std::path::Path::new(&d), &tx)?;
+            Ok("Small-disk mode enabled — the debrid cloud is now a filesystem.".to_string())
         }
         CareOp::UpdateFleet => {
             let d = dir()?;

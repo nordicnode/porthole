@@ -207,12 +207,100 @@ pub fn render_env(p: &EnvParams) -> String {
 // Decypharr config.json
 // ---------------------------------------------------------------------------
 
+/// DFS mount settings for small-disk mode: the debrid cloud appears as a
+/// local filesystem, so playback needs almost no local disk.
+/// Field values follow Decypharr's docs; `disk_cache_size` should be
+/// auto-sized from free disk (see `crate::storage`).
+#[derive(Debug, Clone)]
+pub struct DecypharrMount {
+    /// Where the cloud appears, e.g. "/mnt/decypharr".
+    pub mount_path: String,
+    /// Local cache dir, e.g. "/cache/dfs".
+    pub cache_dir: String,
+    /// Max local cache, e.g. "30GB" — auto-sized, never hardcoded blindly.
+    pub disk_cache_size: String,
+    pub puid: u32,
+    pub pgid: u32,
+}
+
+impl DecypharrMount {
+    /// Sensible defaults; `disk_cache_size` is the one callers must size.
+    pub fn new(
+        mount_path: &str,
+        cache_dir: &str,
+        disk_cache_size: &str,
+        puid: u32,
+        pgid: u32,
+    ) -> Self {
+        Self {
+            mount_path: mount_path.to_string(),
+            cache_dir: cache_dir.to_string(),
+            disk_cache_size: disk_cache_size.to_string(),
+            puid,
+            pgid,
+        }
+    }
+
+    /// The `mount` block as JSON, matching Decypharr's config schema.
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "dfs",
+            "mount_path": self.mount_path,
+            "dfs": {
+                "cache_dir": self.cache_dir,
+                "chunk_size": "10MB",
+                "disk_cache_size": self.disk_cache_size,
+                "cache_expiry": "24h",
+                "cache_cleanup_interval": "1h",
+                "daemon_timeout": "30m",
+                "uid": self.puid,
+                "gid": self.pgid,
+                "umask": "022",
+                "allow_other": true
+            }
+        })
+    }
+}
+
 /// Render `decypharr/config.json`. Mirrors `generate_decypharr_config`
-/// byte-for-byte. Assembled manually (not via to_string_pretty) because the
-/// installer keeps short arrays inline; individual values are still
-/// JSON-escaped via serde_json, so this is safer than the shell version.
-pub fn render_decypharr_config(api_key: &str, username: &str, password: &str) -> String {
+/// byte-for-byte when `mount` is None. With `mount`, appends the DFS mount
+/// block and sets `default_download_action` to `symlink` — the small-disk
+/// mode where *arr "imports" are instant symlinks costing zero bytes.
+pub fn render_decypharr_config(
+    api_key: &str,
+    username: &str,
+    password: &str,
+    mount: Option<&DecypharrMount>,
+) -> String {
     let q = |s: &str| serde_json::to_string(s).expect("value is valid JSON string");
+    let mount_block = mount
+        .map(|m| {
+            format!(
+                "\x20 \"mount\": {{\n\
+                 \x20\x20\x20 \"type\": \"dfs\",\n\
+                 \x20\x20\x20 \"mount_path\": {mount_path},\n\
+                 \x20\x20\x20 \"dfs\": {{\n\
+                 \x20\x20\x20\x20\x20 \"cache_dir\": {cache_dir},\n\
+                 \x20\x20\x20\x20\x20 \"chunk_size\": \"10MB\",\n\
+                 \x20\x20\x20\x20\x20 \"disk_cache_size\": {disk_cache_size},\n\
+                 \x20\x20\x20\x20\x20 \"cache_expiry\": \"24h\",\n\
+                 \x20\x20\x20\x20\x20 \"cache_cleanup_interval\": \"1h\",\n\
+                 \x20\x20\x20\x20\x20 \"daemon_timeout\": \"30m\",\n\
+                 \x20\x20\x20\x20\x20 \"uid\": {puid},\n\
+                 \x20\x20\x20\x20\x20 \"gid\": {pgid},\n\
+                 \x20\x20\x20\x20\x20 \"umask\": \"022\",\n\
+                 \x20\x20\x20\x20\x20 \"allow_other\": true\n\
+                 \x20\x20\x20 }}\n\
+                 \x20 }},\n\
+                 \x20 \"default_download_action\": \"symlink\",\n",
+                mount_path = q(&m.mount_path),
+                cache_dir = q(&m.cache_dir),
+                disk_cache_size = q(&m.disk_cache_size),
+                puid = m.puid,
+                pgid = m.pgid,
+            )
+        })
+        .unwrap_or_default();
     format!(
         "{{\n\
          \x20 \"debrids\": [\n\
@@ -232,12 +320,14 @@ pub fn render_decypharr_config(api_key: &str, username: &str, password: &str) ->
          \x20\x20\x20 \"download_folder\": \"/data/downloads/\",\n\
          \x20\x20\x20 \"categories\": [\"sonarr\", \"radarr\"]\n\
          \x20 }},\n\
+         {mount_block}\
          \x20 \"username\": {username},\n\
          \x20 \"password\": {password},\n\
          \x20 \"port\": \"8282\",\n\
          \x20 \"log_level\": \"info\"\n\
          }}\n",
         api_key = q(api_key),
+        mount_block = mount_block,
         username = q(username),
         password = q(password),
     )
@@ -435,6 +525,7 @@ pub fn generate_all(inp: &GenInputs) -> Vec<GeneratedFile> {
                 inp.torbox_api_key,
                 &inp.secrets.decypharr_user,
                 &inp.secrets.decypharr_pass,
+                None,
             ),
             mode: 0o600,
         },
@@ -575,7 +666,7 @@ mod tests {
 
     #[test]
     fn decypharr_config_matches_installer() {
-        let got = render_decypharr_config("tbk-0123456789abcdef", "torbox", "DecyPass1234");
+        let got = render_decypharr_config("tbk-0123456789abcdef", "torbox", "DecyPass1234", None);
         let want = "{\n\
             \x20 \"debrids\": [\n\
             \x20\x20\x20 {\n\
@@ -635,5 +726,32 @@ mod tests {
         assert!(got.contains("findmnt -n '$MOUNT_DIR'"));
         assert!(got.contains("WantedBy=multi-user.target"));
         assert!(got.contains("WorkingDirectory=\"/home/u/porthole-stack\""));
+    }
+
+    #[test]
+    fn decypharr_config_small_disk_adds_dfs_mount() {
+        let mount = DecypharrMount::new("/mnt/decypharr", "/cache/dfs", "30GB", 1000, 1000);
+        let got = render_decypharr_config("tbk-x", "torbox", "pass", Some(&mount));
+        // Valid JSON with the DFS mount block and symlink imports.
+        let v: serde_json::Value = serde_json::from_str(&got).expect("valid JSON");
+        assert_eq!(v["mount"]["type"], "dfs");
+        assert_eq!(v["mount"]["mount_path"], "/mnt/decypharr");
+        assert_eq!(v["mount"]["dfs"]["cache_dir"], "/cache/dfs");
+        assert_eq!(v["mount"]["dfs"]["disk_cache_size"], "30GB");
+        assert_eq!(v["mount"]["dfs"]["uid"], 1000);
+        assert_eq!(v["mount"]["dfs"]["gid"], 1000);
+        assert_eq!(v["mount"]["dfs"]["allow_other"], true);
+        assert_eq!(v["default_download_action"], "symlink");
+        // Base fields still present.
+        assert_eq!(v["port"], "8282");
+        assert_eq!(v["username"], "torbox");
+    }
+
+    #[test]
+    fn decypharr_config_without_mount_has_no_mount_keys() {
+        let got = render_decypharr_config("tbk-x", "torbox", "pass", None);
+        let v: serde_json::Value = serde_json::from_str(&got).expect("valid JSON");
+        assert!(v.get("mount").is_none());
+        assert!(v.get("default_download_action").is_none());
     }
 }

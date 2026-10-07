@@ -12,6 +12,7 @@ mod generate;
 mod provision;
 mod selfupdate;
 mod services;
+mod storage;
 mod ui;
 
 use std::io;
