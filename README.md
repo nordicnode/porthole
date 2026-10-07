@@ -51,16 +51,18 @@ and shows you the wiring map so you can see (and trust) what was connected.
 cargo run --release
 ```
 
-Or build the release binary directly:
+Or grab the latest release (a single ~2MB binary, no dependencies):
 
 ```bash
-cargo build --release
-./target/release/porthole
+curl -fsSL -o porthole.tar.gz \
+  https://github.com/nordicnode/porthole/releases/latest/download/porthole-x86_64-linux.tar.gz
+tar xzf porthole.tar.gz
+./porthole
 ```
 
 Porthole checks for its own updates once a day and can install them from
 the Care view (`5` → *Check for Porthole updates*) — checksum-verified, no
-package manager needed. (This activates once the first release is published.)
+package manager needed.
 
 Keys: `Tab` switch views · `↑↓` move · `Enter` start setup · `?` help · `q` quit.
 
