@@ -84,54 +84,172 @@ fleet up, it keeps it healthy — still with no expert knowledge required.
       release binary, packages `porthole-x86_64-linux.tar.gz` + SHA256SUMS,
       and publishes a GitHub release
 
-## Phase 4 — Polish & packaging
+## Phase 5 — Small-disk mode: the library lives in the cloud
 
-- [x] `porthole --version`, version shown in the header bar
-- [x] First-run welcome overlay: what Porthole is, in two paragraphs —
-      `Enter` starts the Setup wizard, `Esc` looks around first
-- [x] Self-update: checks GitHub releases at most once a day (background,
-      silent on failure), Care view can install with checksum verification;
-      refuses dev builds (`target/`) honestly
-- [x] Release CI: pushing tag `vX.Y.Z` (matching Cargo.toml) builds the
-      release binary, packages `porthole-x86_64-linux.tar.gz` + SHA256SUMS,
-      and publishes a GitHub release
+The imperative phase. Most users won't have hundreds of GB locally —
+so the default architecture must be: **play locally, store remotely**,
+with a small local disk. Researched October 2026.
 
----
+**The streaming stack** (defaults Porthole applies, no flags to learn):
 
-# The next roadmap — growing the fleet
+- [ ] **Decypharr DFS mount as the default stream path** — the docs'
+      recommended mount: lighter than rclone, ~500MB disk cache, 8MB
+      chunks. (rclone VFS `full` mode remains the own-cloud alternative;
+      WebDAV is never the default — it has no local cache.)
+- [ ] **Symlink imports**: with Decypharr as the download client, *arr
+      "imports" become symlinks — instant, zero disk. No copies, no
+      waiting, no 229 GB duplicate disasters.
+- [ ] **Cache auto-sizing**: Porthole measures free disk at install and
+      sizes the VFS cache itself (warm 10–30 GB per 4K stream is enough;
+      keeps 10 GB headroom; `--vfs-cache-mode full` always — without it,
+      remux seek/resume demonstrably breaks). Buffer kept small
+      (per-open-file RAM — a 2026 incident OOMed a box at 256 MB).
+- [ ] **.strm files as the mountless alternative**: playable with no
+      mount at all — worth offering for the most disk-poor setups.
 
-Researched October 2026 (see `~/workspace/research_notes/
-selfhosted-media-landscape-2026-20261007-0149/`). The guiding principle is
-unchanged: **Porthole is the glue, not the installer.** Every addition below
-is judged by whether the user needs to know less than before — each new
-service must arrive pre-wired to the rest, not as another tab to configure.
+**Media-server settings, applied automatically** (the expert traps):
 
-Two facts shape everything:
+- [ ] Plex: preview thumbnails=Never, chapter/intro markers as scheduled
+      task (not on-scan), loudness analysis=Never, extensive media
+      analysis=off, periodic scans=off — and critically,
+      **empty-trash-automatically=OFF** (a scan during a mount outage
+      with it on deletes library entries).
+- [ ] Jellyfin: real-time monitoring doesn't fire on FUSE — Porthole
+      configures scheduled scans instead.
+- [ ] **Transcode temp stays local**: Porthole reserves ~25 GB free
+      (50 GB+ if 4K transcodes are frequent) and warns honestly at
+      install if the disk can't hold it.
 
-1. **Debrid-only is proven.** Decypharr exposes mock qBittorrent/SABnzbd
-   APIs over TorBox (and others); the *arrs genuinely can't tell it isn't
-   a local client. No Servarr-family app fundamentally needs a real
-   download client. (Caveat: TorBox is Decypharr's roughest edge — issue
-   tracker shows timeouts and uncached-handling bugs; budget testing or
-   pin a community fork carrying the fixes.)
-2. **All Servarr *arrs share one shape**: Prowlarr indexer sync
-   (indexers configured once, pushed to every app), the same `/api/v3`
-   REST patterns with API-key auth, and the same download-client
-   abstraction with per-app categories. Adding a Servarr app is mostly
-   wiring, not invention.
+**Resilience** (mounts will drop; the fleet must not panic):
 
-And one red flag that reshapes provider choice:
+- [ ] Health-gated mount lifecycle: `mountpoint -q` before consumers
+      start; lazy unmount + remount on failure; systemd automount.
+- [ ] Doctor learns the dead-mount signature (`ENOTCONN transport
+      endpoint not connected`) and the recovery ritual: restore mount
+      → restart consumers → rescan → manual empty-trash — automated,
+      in plain language.
+- [ ] Honest bandwidth guidance in the wizard: 4K remux direct play
+      needs ~100–120 Mbps sustained per stream. If the connection
+      can't do it, Porthole says so before promising 4K.
 
-3. **TorBox's July 2026 TOS overhaul.** TorBox is now operated by an
-   opaque UAE free-zone entity (Anonymous Systems FZ-LLC, billing via
-   Delaware ReAnonymous LLC); the new terms push 100% liability to
-   users and require consent to session-replay telemetry, device IDs
-   and IP geolocation, with broad "governmental request" disclosure.
-   Reliability is also reported declining. Porthole must not hard-code
-   TorBox as the only debrid — provider choice becomes a first-class
-   wizard question (see Phase 8).
+**For the truly disk-poor** (optional):
 
-## Phase 5 — Fleet expansion: music, subtitles, sports
+- [ ] **Janitorr**: schedule-based "watched it, delete it" cleaning —
+      the cache's LRU eviction already keeps recently-watched warm;
+      Janitorr makes deletion a policy instead of an accident.
+
+**Traps & edge cases (researched Oct 2026):**
+
+- **Decypharr DFS config, exact**: `mount.type: dfs`,
+  `mount_path: /mnt`, `cache_expiry: 24h`, `cache_dir: /cache/dfs`,
+  `disk_cache_size: 500MB`, `chunk_size: 8MB`, `read_ahead_size:
+  128MB`, and **`allow_other: true` is required**. Symlinks for *arr
+  "imports" resolve to the **FUSE path** — if the mount drops they
+  dangle, items become unplayable, and a scan with empty-trash ON
+  **wipes the library**. (See: empty-trash OFF, always.)
+- **Plex has NEVER supported .strm natively** — Jellyfin/Emby/Kodi
+  only. Plex needs a proxy shim (plex-strm-assistant :3000) plus an
+  ffprobe pass for real metadata. Format is a single-URL text file;
+  auth-walled URLs fail server-side (ffmpeg gets HTML). Offer .strm
+  mode for Jellyfin first; Plex shim is phase-9b.
+- **VFS sizing math**: 25–50% of free disk, minimum ~10–20 GB;
+  `vfs_cache_max_age` 12–24h ("recently watched stays warm").
+  `--buffer-size` is per-file RAM — keep it small.
+- **Plex cloud prefs** (via `PUT /:/prefs` or Preferences.xml, so
+  Porthole sets them programmatically): preview thumbnails NEVER,
+  extensive media analysis OFF, empty trash OFF, intro/credits
+  detection OFF (it decodes the whole file), periodic full scan OFF,
+  relay OFF.
+- **Transcode math**: `./transcode:/transcode` + `TRANS_DIR`, 20–30 GB
+  typical, 50 GB+ for 4K/multi-stream; a full disk gives "Not enough
+  disk space to convert this item". ~2,000 PassMark per 1080p software
+  transcode (~12,000 for 4K — Porthole should steer 4K-transcode boxes
+  to direct play, not promise transcoding).
+- **Mount resilience, exact**: systemd `Type=notify`,
+  `ExecStop=fusermount -uz`, `Restart=always`; health via
+  `mountpoint -q`; on ENOTCONN: lazy unmount → restart mount →
+  verify → trigger Plex/Jellyfin refresh. Doctor automates this
+  sequence.
+- **Janitorr is a loaded gun**: port 8978, `application.yml`, needs
+  Jellystat (or Streamystats — not both), **`dry-run: true` is the
+  default** (keep it), "Leaving Soon" collections as the review
+  queue. **Issue #234: "deleted half of library"** — bad Jellystat
+  watch data + aggressive expiration = mass deletion. And Jellyfin
+  deletes need a **dedicated user account** — an API key alone is
+  insufficient. Porthole gates Janitorr behind a watched-data sanity
+  check and keeps dry-run until the user explicitly arms it.
+- **Bandwidth honesty**: measure at install (`speedtest-cli` +
+  server→client iperf3). Thresholds: <15 Mbps = 1080p risky, 25 Mbps
+  = compressed 4K, **60–80+ Mbps sustained for 4K remux** (typical
+  remux ~100 Mbps peaks — budget +50% headroom for VBR). If the pipe
+  can't do it, Porthole says so before promising 4K.
+
+**Re-check at implementation** (index-researched Oct 2026, no live
+verification — confirm before building): AllDebrid live host status;
+Sportarr bug #229 fix state; Premiumize exact point costs (readable
+via API); pCloud 2026 policy fine print; Bazarr+ fork vs conservative
+upstream 1.6.x; Jellyfin 12.x API parity for Janitorr deletes.
+
+## Phase 6 — Expert config, zero questions
+
+Researched October 2026. The key finding: **Porthole should not
+hand-configure the *arrs at all.** Ship **Configarr** as a fleet
+container (2026's better default over Recyclarr: feature superset,
+Lidarr support, active development, accepts Recyclarr templates) and
+generate its `config.yml` from four user questions. Configarr then
+syncs TRaSH-Guides quality profiles, custom formats + scores, quality
+sizes, and file naming — idempotently, on a schedule. Hand edits to
+managed profiles get reverted by design; Porthole designs around that
+instead of fighting it.
+
+- [ ] **Configarr as a first-class fleet member**: container + generated
+      `config.yml`, scheduled sync. The four questions: 1080p vs 4K, HDR
+      preference, HD-audio preference, anime? Everything else automatic.
+- [ ] **TRaSH 2026 profiles applied**: Sonarr `WEB-1080p`/`WEB-2160p`,
+      Radarr `HD Bluray + WEB`/`UHD Bluray + WEB` (+Remux variants);
+      cutoff = top quality, upgrades ON, min CF score 0, upgrade-until
+      10,000; unwanted CFs at −10,000 (BR-DISK, LQ, x265-HD, Extras,
+      AV1 — still blocked in 2026, no VVC guidance exists); group tiers
+      +1600–1800 (P2P over scene); Radarr audio ladder TrueHD Atmos
+      5000 → DD 750; 4K HDR stack (HDR/DV/DV-Boost scores, DV-no-fallback
+      −10,000). Propers & Repacks = **Do Not Prefer** (Repack/Proper
+      CFs handle it).
+- [ ] **Exact TRaSH naming applied**: Radarr Plex-TMDb variant with
+      `{tmdb-{TmdbId}}` + `{edition-{Edition Tags}}` (Jellyfin variants
+      use `[tmdbid-…]`); Sonarr standard/daily/anime formats with
+      `{tvdb-{TvdbId}}` series folders and `Season {season:00}`;
+      multi-episode = Prefixed Range. (Full strings in research notes.)
+- [ ] **Decypharr wiring, exact**: download client host
+      `decypharr:8282`, category per app (`sonarr`/`radarr`/`lidarr`);
+      **Username = the *arr's own URL** (e.g. `http://sonarr:8989`),
+      **Password = the *arr's API key** — not auth, it's callback
+      routing. Remove Completed = Yes, Remove Failed = No. SABnzbd
+      variant adds URL Base `/sabnzbd`. **No remote path mappings
+      needed** — the single-`/data`-everywhere rule (Phase 7) makes
+      them unnecessary.
+- [ ] **Prowlarr sync, exact**: one-way push, Prowlarr wins conflicts;
+      it does NOT sync download clients (configure those per *arr).
+      After rebuilds, per-app sync can silently no-op on missing
+      indexers — Porthole re-syncs via
+      `POST /api/v1/command {"name":"ApplicationIndexerSync"}` and
+      verifies.
+- [ ] **The entire question budget** — the only things Porthole ever
+      asks the user, ever: 1080p vs 4K · HDR? · HD audio? · anime? ·
+      host path for /data · indexer credentials · debrid credentials ·
+      Plex vs Jellyfin · primary language (if not English). Nine
+      questions. Everything else is derived.
+- [ ] **Top-5 misconfigurations, designed out**: split bind mounts
+      (single `/data` enforced + hardlink smoke test); hand-editing
+      synced profiles (managed profiles not presented as editable);
+      wrong Prowlarr resync (Porthole re-syncs + verifies); substring
+      blocklist terms (`TS` blocks "Jujutsu" — use regex `\bts\b` or
+      CFs, never substrings); Decypharr user/pass left blank (always
+      arr URL + API key).
+- [ ] Lidarr note: TRaSH guidance for music is community-grade
+      (Davo guide, FLAC-first) with experimental Configarr support —
+      ship with conservative defaults, mark experimental in the UI.
+
+## Phase 7 — Fleet expansion: music, subtitles, sports
 
 The three highest-value, lowest-risk additions. All actively maintained;
 all slot into the existing wiring with no new infrastructure.
@@ -192,70 +310,95 @@ all slot into the existing wiring with no new infrastructure.
   `*.db*` (while stopped) + `/config` with identical UID/GID and
   path pairs.
 
-## Phase 6 — The fleet looks after itself: companion automation
+## Phase 8 — Download choice: providers, privacy, and beyond debrid-only
 
-The thesis extended: not just installed and wired, but *maintained*
-without expertise. Each of these is actively maintained and API-wired
-to the fleet.
+Debrid stays the default path, but *which* debrid — and how private the
+whole thing is — becomes a first-class choice. Researched October 2026.
 
-- [ ] **Maintainerr** (v3.30.0 Oct 2026) — rule-based collection
-      management: deletes watched-and-aging media, cleans up Seerr
-      requests. Wiring: needs a watch-stats source, which chains to the
-      next two. This is the "counterweight to hoarding."
-- [ ] **Tautulli** (Plex, v2.18.1) / **Jellystat** (Jellyfin, v1.1.12) —
-      watch stats and monitoring, one per the chosen media server.
-      Wiring: API tokens auto-configured; Jellystat's REST API feeds
-      Maintainerr directly.
-- [ ] **Cleanuparr** (v2.10.6) — queue hygiene: kills stalled/blocked
-      downloads and re-searches. Wiring: *arr + download-client APIs
-      Porthole already holds. (Run *or* Decluttarr, not both.)
-- [ ] **Unpackerr** — auto-extracts archives so *arr imports never stall.
-      Tiny, harmless, default-on candidate.
-- [ ] **Configarr** — syncs TRaSH-Guides quality profiles and custom
-      formats into Sonarr/Radarr/Lidarr. This is the "sane defaults"
-      play: the single biggest no-expert-knowledge win in the *arr
-      world, and exactly Porthole's thesis. Promoted to a core
-      architectural piece — see Phase 10 for the full design
-      (generated `config.yml`, the four-question budget, exact TRaSH
-      profiles and naming, Decypharr wiring specifics).
-- [ ] **Wizarr** (v2026.7.0) — invite links and onboarding for
-      friends/family (Plex/Jellyfin/Emby). Wiring: media-server API +
-      Seerr link. Strongest fit for the thesis: sharing the fleet with
-      non-technical people, zero explanation needed.
-- [ ] Kometa (Plex collections/metadata automation) — strong for Plex
-      users; skip entirely on Jellyfin (no equivalent). Optional,
-      Plex-profile only.
+**Debrid provider choice** (all five integrate with Decypharr via API
+key, so swapping is a config change, not a rebuild):
+
+- [ ] Wizard asks which debrid: **Premiumize** (recommended — bundles
+      debrid + cloud + Usenet + VPN, excellent API; watch the point-based
+      fair use under heavy *arr automation), **AllDebrid** (budget pick),
+      **TorBox** (current default, kept for continuity — but the July
+      2026 TOS overhaul and declining reliability are disclosed honestly
+      in the wizard), **Debrid-Link** (built-in seeding), **Real-Debrid**
+      (fallback only — keyword copyright filter since May 2026 broke
+      50–70% of cached mainstream 4K; strict single-IP enforcement).
+- [ ] No service has an official Sonarr/Radarr plugin; Decypharr remains
+      the multi-provider standard. Porthole pins a Decypharr build with
+      the TorBox fixes (community forks carry unmerged patches).
+
+**The privacy stack** — what the ISP can and cannot see, in plain
+language on screen:
+
+- [ ] **The local-download privacy profile**: **gluetun** as the Docker
+      VPN gateway (still the 2026 standard) — qBittorrent/SABnzbd/Prowlarr
+      ride `network_mode: service:gluetun`; kill switch is gluetun's
+      built-in firewall (on by default); qBittorrent additionally bound
+      to the VPN interface as a second layer. VPN picks, verified
+      torrent-friendly with port forwarding: **PIA** or **Proton VPN**
+      (Mullvad is private but dropped port forwarding — worse for
+      seeding; Nord/Surfshark/Express have none). Plex/Jellyfin/Seerr
+      stay OFF the VPN.
+- [ ] **Honest guidance Porthole gives**: Usenet-over-SSL and debrid-over-
+      HTTPS already blind the ISP to *content* (it sees only encrypted
+      sessions, endpoints, timing, volume — no swarm, no harvestable
+      IPs); a VPN on top hides *which* provider you use. **WARP is not a
+      VPN replacement** — it encrypts transit from the ISP but Cloudflare
+      sees everything, with ~2yr retention and no location choice.
+      Porthole says this plainly instead of offering a WARP toggle.
+- [ ] **Fleet profiles in the wizard**: *Debrid (recommended)* vs
+      *Usenet + Torrent (self-downloaded, VPN-routed)* vs *Hybrid*. One
+      question, everything downstream rewires: *arr download clients
+      point at Decypharr's mocks or the real clients; categories
+      (`sonarr`, `radarr`, `lidarr`…) configured automatically.
+- [ ] **SABnzbd 5.x** — the default NZB client (best *arr integration).
+      The nzbget.com community fork as the lightweight alternative
+      (original NZBGet is discontinued — never ship the dead repo).
+- [ ] **qBittorrent 5.x** — the default torrent client (native categories
+      the *arrs' import logic assumes). Transmission/Deluge only if a
+      user brings their own.
+- [ ] **autobrr** as the optional power-user add for private-tracker
+      racing; **seedboxes** documented as the heavy-seeding alternative
+      (largely redundant if you already pay for debrid).
 
 **Traps & edge cases (researched Oct 2026):**
 
-- **Maintainerr deletes for real.** Always start in dry-run mode with
-  the pre-execution review page (v3.17.0+) — Porthole's default rule
-  set must be conservative, and the first run is review-only.
-- **Jellystat needs PostgreSQL** — that's a second container and
-  `pg_dump`-based backups, not just a volume copy. Porthole must
-  provision and back up both.
-- **Recyclarr reverts hand-edited profiles.** First sync merges, but
-  the next sync reverts any hand edits to *managed* profiles. Porthole
-  must warn before the user touches them (or better: never present the
-  managed profiles as editable).
-- **Kometa needs a TMDb API key** — another signup in the wizard, and
-  its sane default config is ~150–300 lines of YAML Porthole must
-  template, not ask about.
-- **Cleanuparr over Decluttarr** as the default (per-*arr scoping,
-  actively maintained) — and stall timeouts must be generous with
-  Decypharr in the chain, or it will kill slow-but-healthy debrid
-  downloads.
-- Dependency order matters: Postgres → Jellystat → Plex/Jellyfin →
-  Tautulli → Maintainerr; Prowlarr → *arrs → Recyclarr. Porthole must
-  bring them up in order and wire the full API-key chain itself: *arr
-  keys → Prowlarr/Bazarr/Cleanuparr/Unpackerr/Recyclarr/Maintainerr;
-  Plex token → Tautulli/Maintainerr/Wizarr/Kometa; Jellystat
-  x-api-token → Maintainerr/Janitorr; Tautulli key → Maintainerr;
-  Seerr key → Maintainerr.
-- Footprint: ~9 more containers (fleet ≈ 20), +2–3 GB RAM idle.
-  The wizard should say this plainly.
+- **Plex must NOT go behind gluetun** — it kills remote access.
+  Only the downloaders (*arrs, qBittorrent, SABnzbd, Prowlarr) ride
+  `network_mode: service:gluetun`; Plex/Jellyfin/Seerr stay on the
+  normal network. LAN egress needs
+  `FIREWALL_OUTBOUND_SUBNETS=192.168.1.0/24`.
+- **qBittorrent 5.x generates a random admin password on first
+  run** — Porthole pre-seeds it (`QBITTORRENT_PASSWORD` or the PBKDF2
+  config key) or the user is locked out. Content Layout must be
+  **"Original"** (not "Create subfolder"), per-category paths
+  `/data/torrents/<category>` — the *arr import logic assumes this.
+- **Bind qBittorrent to the VPN interface too** (Settings → Advanced
+  → Network Interface → tun0/wg0): second layer if the firewall ever
+  fails open. Verify the whole chain: `curl ifconfig.me` from inside
+  a routed container shows the VPN IP, then stop gluetun and confirm
+  traffic dies.
+- **AllDebrid: 16 of 52 advertised hosts online** (Aug 2026 spot
+  check — re-verify at implementation) and a **12 req/s + 600/min per
+  key** API cap — budget across 4+ *arrs; use Prowlarr as the single
+  query point.
+- **Premiumize points**: per-GB point costs with daily regen — heavy
+  4K days can exhaust them; Porthole should surface the balance, not
+  just fail downloads.
+- **Decypharr per-provider quirks**: `debrids[]` entries carry
+  provider/api_key/rate_limit/refresh/workers; `default_download_action`
+  is `symlink|download|strm|none`. TorBox is the roughest provider,
+  Real-Debrid the smoothest. Per-*arr provider splits need a **second
+  Decypharr instance (:8283)** plus Remote Path Mapping — document,
+  don't automate, v1.
+- **autobrr has no shippable defaults** (v1.87.0) — filters are
+  inherently manual. Porthole deploys it, wires the *arr APIs, and
+  ships commented example filters. Honest, not magic.
 
-## Phase 7 — Storage: your drives, your cloud, encrypted
+## Phase 9 — Storage: your drives, your cloud, encrypted
 
 The user asked about FUSE mounts, rclone, GDrive/Dropbox mounting —
 then about downloading locally and pushing to remote storage
@@ -367,262 +510,68 @@ mixed-capacity redundancy, still roadmap-stage).
   `--bwlimit "01:00,off 08:00,30M"`; dynamic throttling via
   `rclone rcd` + `rclone rc core/bwlimit`.
 
-## Phase 8 — Download choice: providers, privacy, and beyond debrid-only
+## Phase 10 — The fleet looks after itself: companion automation
 
-Debrid stays the default path, but *which* debrid — and how private the
-whole thing is — becomes a first-class choice. Researched October 2026.
+The thesis extended: not just installed and wired, but *maintained*
+without expertise. Each of these is actively maintained and API-wired
+to the fleet.
 
-**Debrid provider choice** (all five integrate with Decypharr via API
-key, so swapping is a config change, not a rebuild):
-
-- [ ] Wizard asks which debrid: **Premiumize** (recommended — bundles
-      debrid + cloud + Usenet + VPN, excellent API; watch the point-based
-      fair use under heavy *arr automation), **AllDebrid** (budget pick),
-      **TorBox** (current default, kept for continuity — but the July
-      2026 TOS overhaul and declining reliability are disclosed honestly
-      in the wizard), **Debrid-Link** (built-in seeding), **Real-Debrid**
-      (fallback only — keyword copyright filter since May 2026 broke
-      50–70% of cached mainstream 4K; strict single-IP enforcement).
-- [ ] No service has an official Sonarr/Radarr plugin; Decypharr remains
-      the multi-provider standard. Porthole pins a Decypharr build with
-      the TorBox fixes (community forks carry unmerged patches).
-
-**The privacy stack** — what the ISP can and cannot see, in plain
-language on screen:
-
-- [ ] **The local-download privacy profile**: **gluetun** as the Docker
-      VPN gateway (still the 2026 standard) — qBittorrent/SABnzbd/Prowlarr
-      ride `network_mode: service:gluetun`; kill switch is gluetun's
-      built-in firewall (on by default); qBittorrent additionally bound
-      to the VPN interface as a second layer. VPN picks, verified
-      torrent-friendly with port forwarding: **PIA** or **Proton VPN**
-      (Mullvad is private but dropped port forwarding — worse for
-      seeding; Nord/Surfshark/Express have none). Plex/Jellyfin/Seerr
-      stay OFF the VPN.
-- [ ] **Honest guidance Porthole gives**: Usenet-over-SSL and debrid-over-
-      HTTPS already blind the ISP to *content* (it sees only encrypted
-      sessions, endpoints, timing, volume — no swarm, no harvestable
-      IPs); a VPN on top hides *which* provider you use. **WARP is not a
-      VPN replacement** — it encrypts transit from the ISP but Cloudflare
-      sees everything, with ~2yr retention and no location choice.
-      Porthole says this plainly instead of offering a WARP toggle.
-- [ ] **Fleet profiles in the wizard**: *Debrid (recommended)* vs
-      *Usenet + Torrent (self-downloaded, VPN-routed)* vs *Hybrid*. One
-      question, everything downstream rewires: *arr download clients
-      point at Decypharr's mocks or the real clients; categories
-      (`sonarr`, `radarr`, `lidarr`…) configured automatically.
-- [ ] **SABnzbd 5.x** — the default NZB client (best *arr integration).
-      The nzbget.com community fork as the lightweight alternative
-      (original NZBGet is discontinued — never ship the dead repo).
-- [ ] **qBittorrent 5.x** — the default torrent client (native categories
-      the *arrs' import logic assumes). Transmission/Deluge only if a
-      user brings their own.
-- [ ] **autobrr** as the optional power-user add for private-tracker
-      racing; **seedboxes** documented as the heavy-seeding alternative
-      (largely redundant if you already pay for debrid).
+- [ ] **Maintainerr** (v3.30.0 Oct 2026) — rule-based collection
+      management: deletes watched-and-aging media, cleans up Seerr
+      requests. Wiring: needs a watch-stats source, which chains to the
+      next two. This is the "counterweight to hoarding."
+- [ ] **Tautulli** (Plex, v2.18.1) / **Jellystat** (Jellyfin, v1.1.12) —
+      watch stats and monitoring, one per the chosen media server.
+      Wiring: API tokens auto-configured; Jellystat's REST API feeds
+      Maintainerr directly.
+- [ ] **Cleanuparr** (v2.10.6) — queue hygiene: kills stalled/blocked
+      downloads and re-searches. Wiring: *arr + download-client APIs
+      Porthole already holds. (Run *or* Decluttarr, not both.)
+- [ ] **Unpackerr** — auto-extracts archives so *arr imports never stall.
+      Tiny, harmless, default-on candidate.
+- [ ] **Configarr** — syncs TRaSH-Guides quality profiles and custom
+      formats into Sonarr/Radarr/Lidarr. This is the "sane defaults"
+      play: the single biggest no-expert-knowledge win in the *arr
+      world, and exactly Porthole's thesis. Promoted to a core
+      architectural piece — see Phase 6 for the full design
+      (generated `config.yml`, the four-question budget, exact TRaSH
+      profiles and naming, Decypharr wiring specifics).
+- [ ] **Wizarr** (v2026.7.0) — invite links and onboarding for
+      friends/family (Plex/Jellyfin/Emby). Wiring: media-server API +
+      Seerr link. Strongest fit for the thesis: sharing the fleet with
+      non-technical people, zero explanation needed.
+- [ ] Kometa (Plex collections/metadata automation) — strong for Plex
+      users; skip entirely on Jellyfin (no equivalent). Optional,
+      Plex-profile only.
 
 **Traps & edge cases (researched Oct 2026):**
 
-- **Plex must NOT go behind gluetun** — it kills remote access.
-  Only the downloaders (*arrs, qBittorrent, SABnzbd, Prowlarr) ride
-  `network_mode: service:gluetun`; Plex/Jellyfin/Seerr stay on the
-  normal network. LAN egress needs
-  `FIREWALL_OUTBOUND_SUBNETS=192.168.1.0/24`.
-- **qBittorrent 5.x generates a random admin password on first
-  run** — Porthole pre-seeds it (`QBITTORRENT_PASSWORD` or the PBKDF2
-  config key) or the user is locked out. Content Layout must be
-  **"Original"** (not "Create subfolder"), per-category paths
-  `/data/torrents/<category>` — the *arr import logic assumes this.
-- **Bind qBittorrent to the VPN interface too** (Settings → Advanced
-  → Network Interface → tun0/wg0): second layer if the firewall ever
-  fails open. Verify the whole chain: `curl ifconfig.me` from inside
-  a routed container shows the VPN IP, then stop gluetun and confirm
-  traffic dies.
-- **AllDebrid: 16 of 52 advertised hosts online** (Aug 2026 spot
-  check — re-verify at implementation) and a **12 req/s + 600/min per
-  key** API cap — budget across 4+ *arrs; use Prowlarr as the single
-  query point.
-- **Premiumize points**: per-GB point costs with daily regen — heavy
-  4K days can exhaust them; Porthole should surface the balance, not
-  just fail downloads.
-- **Decypharr per-provider quirks**: `debrids[]` entries carry
-  provider/api_key/rate_limit/refresh/workers; `default_download_action`
-  is `symlink|download|strm|none`. TorBox is the roughest provider,
-  Real-Debrid the smoothest. Per-*arr provider splits need a **second
-  Decypharr instance (:8283)** plus Remote Path Mapping — document,
-  don't automate, v1.
-- **autobrr has no shippable defaults** (v1.87.0) — filters are
-  inherently manual. Porthole deploys it, wires the *arr APIs, and
-  ships commented example filters. Honest, not magic.
-
-## Phase 9 — Small-disk mode: the library lives in the cloud
-
-The imperative phase. Most users won't have hundreds of GB locally —
-so the default architecture must be: **play locally, store remotely**,
-with a small local disk. Researched October 2026.
-
-**The streaming stack** (defaults Porthole applies, no flags to learn):
-
-- [ ] **Decypharr DFS mount as the default stream path** — the docs'
-      recommended mount: lighter than rclone, ~500MB disk cache, 8MB
-      chunks. (rclone VFS `full` mode remains the own-cloud alternative;
-      WebDAV is never the default — it has no local cache.)
-- [ ] **Symlink imports**: with Decypharr as the download client, *arr
-      "imports" become symlinks — instant, zero disk. No copies, no
-      waiting, no 229 GB duplicate disasters.
-- [ ] **Cache auto-sizing**: Porthole measures free disk at install and
-      sizes the VFS cache itself (warm 10–30 GB per 4K stream is enough;
-      keeps 10 GB headroom; `--vfs-cache-mode full` always — without it,
-      remux seek/resume demonstrably breaks). Buffer kept small
-      (per-open-file RAM — a 2026 incident OOMed a box at 256 MB).
-- [ ] **.strm files as the mountless alternative**: playable with no
-      mount at all — worth offering for the most disk-poor setups.
-
-**Media-server settings, applied automatically** (the expert traps):
-
-- [ ] Plex: preview thumbnails=Never, chapter/intro markers as scheduled
-      task (not on-scan), loudness analysis=Never, extensive media
-      analysis=off, periodic scans=off — and critically,
-      **empty-trash-automatically=OFF** (a scan during a mount outage
-      with it on deletes library entries).
-- [ ] Jellyfin: real-time monitoring doesn't fire on FUSE — Porthole
-      configures scheduled scans instead.
-- [ ] **Transcode temp stays local**: Porthole reserves ~25 GB free
-      (50 GB+ if 4K transcodes are frequent) and warns honestly at
-      install if the disk can't hold it.
-
-**Resilience** (mounts will drop; the fleet must not panic):
-
-- [ ] Health-gated mount lifecycle: `mountpoint -q` before consumers
-      start; lazy unmount + remount on failure; systemd automount.
-- [ ] Doctor learns the dead-mount signature (`ENOTCONN transport
-      endpoint not connected`) and the recovery ritual: restore mount
-      → restart consumers → rescan → manual empty-trash — automated,
-      in plain language.
-- [ ] Honest bandwidth guidance in the wizard: 4K remux direct play
-      needs ~100–120 Mbps sustained per stream. If the connection
-      can't do it, Porthole says so before promising 4K.
-
-**For the truly disk-poor** (optional):
-
-- [ ] **Janitorr**: schedule-based "watched it, delete it" cleaning —
-      the cache's LRU eviction already keeps recently-watched warm;
-      Janitorr makes deletion a policy instead of an accident.
-
-Note on ordering: this phase is listed ninth but is architecturally
-foundational — small-disk mode should be the *default* Porthole
-assumes, with big-local-disk as the advanced path, not the reverse.
-
-**Traps & edge cases (researched Oct 2026):**
-
-- **Decypharr DFS config, exact**: `mount.type: dfs`,
-  `mount_path: /mnt`, `cache_expiry: 24h`, `cache_dir: /cache/dfs`,
-  `disk_cache_size: 500MB`, `chunk_size: 8MB`, `read_ahead_size:
-  128MB`, and **`allow_other: true` is required**. Symlinks for *arr
-  "imports" resolve to the **FUSE path** — if the mount drops they
-  dangle, items become unplayable, and a scan with empty-trash ON
-  **wipes the library**. (See: empty-trash OFF, always.)
-- **Plex has NEVER supported .strm natively** — Jellyfin/Emby/Kodi
-  only. Plex needs a proxy shim (plex-strm-assistant :3000) plus an
-  ffprobe pass for real metadata. Format is a single-URL text file;
-  auth-walled URLs fail server-side (ffmpeg gets HTML). Offer .strm
-  mode for Jellyfin first; Plex shim is phase-9b.
-- **VFS sizing math**: 25–50% of free disk, minimum ~10–20 GB;
-  `vfs_cache_max_age` 12–24h ("recently watched stays warm").
-  `--buffer-size` is per-file RAM — keep it small.
-- **Plex cloud prefs** (via `PUT /:/prefs` or Preferences.xml, so
-  Porthole sets them programmatically): preview thumbnails NEVER,
-  extensive media analysis OFF, empty trash OFF, intro/credits
-  detection OFF (it decodes the whole file), periodic full scan OFF,
-  relay OFF.
-- **Transcode math**: `./transcode:/transcode` + `TRANS_DIR`, 20–30 GB
-  typical, 50 GB+ for 4K/multi-stream; a full disk gives "Not enough
-  disk space to convert this item". ~2,000 PassMark per 1080p software
-  transcode (~12,000 for 4K — Porthole should steer 4K-transcode boxes
-  to direct play, not promise transcoding).
-- **Mount resilience, exact**: systemd `Type=notify`,
-  `ExecStop=fusermount -uz`, `Restart=always`; health via
-  `mountpoint -q`; on ENOTCONN: lazy unmount → restart mount →
-  verify → trigger Plex/Jellyfin refresh. Doctor automates this
-  sequence.
-- **Janitorr is a loaded gun**: port 8978, `application.yml`, needs
-  Jellystat (or Streamystats — not both), **`dry-run: true` is the
-  default** (keep it), "Leaving Soon" collections as the review
-  queue. **Issue #234: "deleted half of library"** — bad Jellystat
-  watch data + aggressive expiration = mass deletion. And Jellyfin
-  deletes need a **dedicated user account** — an API key alone is
-  insufficient. Porthole gates Janitorr behind a watched-data sanity
-  check and keeps dry-run until the user explicitly arms it.
-- **Bandwidth honesty**: measure at install (`speedtest-cli` +
-  server→client iperf3). Thresholds: <15 Mbps = 1080p risky, 25 Mbps
-  = compressed 4K, **60–80+ Mbps sustained for 4K remux** (typical
-  remux ~100 Mbps peaks — budget +50% headroom for VBR). If the pipe
-  can't do it, Porthole says so before promising 4K.
-
-**Re-check at implementation** (index-researched Oct 2026, no live
-verification — confirm before building): AllDebrid live host status;
-Sportarr bug #229 fix state; Premiumize exact point costs (readable
-via API); pCloud 2026 policy fine print; Bazarr+ fork vs conservative
-upstream 1.6.x; Jellyfin 12.x API parity for Janitorr deletes.
-
-## Phase 10 — Expert config, zero questions
-
-Researched October 2026. The key finding: **Porthole should not
-hand-configure the *arrs at all.** Ship **Configarr** as a fleet
-container (2026's better default over Recyclarr: feature superset,
-Lidarr support, active development, accepts Recyclarr templates) and
-generate its `config.yml` from four user questions. Configarr then
-syncs TRaSH-Guides quality profiles, custom formats + scores, quality
-sizes, and file naming — idempotently, on a schedule. Hand edits to
-managed profiles get reverted by design; Porthole designs around that
-instead of fighting it.
-
-- [ ] **Configarr as a first-class fleet member**: container + generated
-      `config.yml`, scheduled sync. The four questions: 1080p vs 4K, HDR
-      preference, HD-audio preference, anime? Everything else automatic.
-- [ ] **TRaSH 2026 profiles applied**: Sonarr `WEB-1080p`/`WEB-2160p`,
-      Radarr `HD Bluray + WEB`/`UHD Bluray + WEB` (+Remux variants);
-      cutoff = top quality, upgrades ON, min CF score 0, upgrade-until
-      10,000; unwanted CFs at −10,000 (BR-DISK, LQ, x265-HD, Extras,
-      AV1 — still blocked in 2026, no VVC guidance exists); group tiers
-      +1600–1800 (P2P over scene); Radarr audio ladder TrueHD Atmos
-      5000 → DD 750; 4K HDR stack (HDR/DV/DV-Boost scores, DV-no-fallback
-      −10,000). Propers & Repacks = **Do Not Prefer** (Repack/Proper
-      CFs handle it).
-- [ ] **Exact TRaSH naming applied**: Radarr Plex-TMDb variant with
-      `{tmdb-{TmdbId}}` + `{edition-{Edition Tags}}` (Jellyfin variants
-      use `[tmdbid-…]`); Sonarr standard/daily/anime formats with
-      `{tvdb-{TvdbId}}` series folders and `Season {season:00}`;
-      multi-episode = Prefixed Range. (Full strings in research notes.)
-- [ ] **Decypharr wiring, exact**: download client host
-      `decypharr:8282`, category per app (`sonarr`/`radarr`/`lidarr`);
-      **Username = the *arr's own URL** (e.g. `http://sonarr:8989`),
-      **Password = the *arr's API key** — not auth, it's callback
-      routing. Remove Completed = Yes, Remove Failed = No. SABnzbd
-      variant adds URL Base `/sabnzbd`. **No remote path mappings
-      needed** — the single-`/data`-everywhere rule (Phase 7) makes
-      them unnecessary.
-- [ ] **Prowlarr sync, exact**: one-way push, Prowlarr wins conflicts;
-      it does NOT sync download clients (configure those per *arr).
-      After rebuilds, per-app sync can silently no-op on missing
-      indexers — Porthole re-syncs via
-      `POST /api/v1/command {"name":"ApplicationIndexerSync"}` and
-      verifies.
-- [ ] **The entire question budget** — the only things Porthole ever
-      asks the user, ever: 1080p vs 4K · HDR? · HD audio? · anime? ·
-      host path for /data · indexer credentials · debrid credentials ·
-      Plex vs Jellyfin · primary language (if not English). Nine
-      questions. Everything else is derived.
-- [ ] **Top-5 misconfigurations, designed out**: split bind mounts
-      (single `/data` enforced + hardlink smoke test); hand-editing
-      synced profiles (managed profiles not presented as editable);
-      wrong Prowlarr resync (Porthole re-syncs + verifies); substring
-      blocklist terms (`TS` blocks "Jujutsu" — use regex `\bts\b` or
-      CFs, never substrings); Decypharr user/pass left blank (always
-      arr URL + API key).
-- [ ] Lidarr note: TRaSH guidance for music is community-grade
-      (Davo guide, FLAC-first) with experimental Configarr support —
-      ship with conservative defaults, mark experimental in the UI.
+- **Maintainerr deletes for real.** Always start in dry-run mode with
+  the pre-execution review page (v3.17.0+) — Porthole's default rule
+  set must be conservative, and the first run is review-only.
+- **Jellystat needs PostgreSQL** — that's a second container and
+  `pg_dump`-based backups, not just a volume copy. Porthole must
+  provision and back up both.
+- **Recyclarr reverts hand-edited profiles.** First sync merges, but
+  the next sync reverts any hand edits to *managed* profiles. Porthole
+  must warn before the user touches them (or better: never present the
+  managed profiles as editable).
+- **Kometa needs a TMDb API key** — another signup in the wizard, and
+  its sane default config is ~150–300 lines of YAML Porthole must
+  template, not ask about.
+- **Cleanuparr over Decluttarr** as the default (per-*arr scoping,
+  actively maintained) — and stall timeouts must be generous with
+  Decypharr in the chain, or it will kill slow-but-healthy debrid
+  downloads.
+- Dependency order matters: Postgres → Jellystat → Plex/Jellyfin →
+  Tautulli → Maintainerr; Prowlarr → *arrs → Recyclarr. Porthole must
+  bring them up in order and wire the full API-key chain itself: *arr
+  keys → Prowlarr/Bazarr/Cleanuparr/Unpackerr/Recyclarr/Maintainerr;
+  Plex token → Tautulli/Maintainerr/Wizarr/Kometa; Jellystat
+  x-api-token → Maintainerr/Janitorr; Tautulli key → Maintainerr;
+  Seerr key → Maintainerr.
+- Footprint: ~9 more containers (fleet ≈ 20), +2–3 GB RAM idle.
+  The wizard should say this plainly.
 
 ## Explicitly deferred — researched, not planned
 
