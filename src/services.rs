@@ -1,5 +1,5 @@
-//! The fleet: every service Porthole manages, described in plain language,
-//! plus the wiring map — how Porthole introduces the services to each other
+//! The fleet: every service Shiphand manages, described in plain language,
+//! plus the wiring map — how Shiphand introduces the services to each other
 //! so the user never has to.
 
 /// A single service in the fleet.
@@ -18,7 +18,7 @@ pub struct Service {
     pub group: &'static str,
 }
 
-/// One "introduction" Porthole performs: `from` wired into `to`.
+/// One "introduction" Shiphand performs: `from` wired into `to`.
 pub struct Integration {
     pub from: &'static str,
     pub to: &'static str,
@@ -205,7 +205,7 @@ pub static SERVICES: &[Service] = &[
     },
 ];
 
-/// The wiring map. This is Porthole's real product: every introduction below
+/// The wiring map. This is Shiphand's real product: every introduction below
 /// is something the user would otherwise configure by hand across five
 /// different settings pages with API keys.
 pub static INTEGRATIONS: &[Integration] = &[

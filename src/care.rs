@@ -41,7 +41,7 @@ pub fn create_backup(install_dir: &Path) -> Result<PathBuf> {
     }
     let dir = backup_dir();
     std::fs::create_dir_all(&dir).context("creating backup dir")?;
-    let dest = dir.join(format!("porthole-backup-{}.tar.gz", timestamp()));
+    let dest = dir.join(format!("shiphand-backup-{}.tar.gz", timestamp()));
     let parent = install_dir.parent().context("install dir has no parent")?;
     let name = install_dir.file_name().context("install dir has no name")?;
     // Exclude the data dir (media/downloads): huge and re-fetchable.
@@ -344,7 +344,7 @@ pub fn update_fleet(install_dir: &Path, tx: &Sender<CareEvent>) -> Result<()> {
 
     // 2. Tag current images so we can roll back to them.
     // Get the full service list from compose (includes override extras).
-    let tag = format!("porthole-prev-{}", timestamp());
+    let tag = format!("shiphand-prev-{}", timestamp());
     let mut tagged: Vec<(String, String, String)> = Vec::new(); // (service, image, old_id)
     let all_services = compose_service_ids(install_dir);
     for svc_id in all_services {
@@ -463,7 +463,7 @@ fn rollback(
     log("[ok] rollback complete — fleet is back where it started");
 }
 
-/// Rewrite all config files using Porthole's native generator, preserving
+/// Rewrite all config files using Shiphand's native generator, preserving
 /// existing secrets (API keys, passwords) from the current `.env`.
 /// A backup is taken first. Useful after a rotated TorBox key or a
 /// corrupted config — no expert knowledge needed.
@@ -541,7 +541,7 @@ pub fn regenerate_configs(install_dir: &Path, tx: &Sender<CareEvent>) -> Result<
 pub enum CareEvent {
     Log(String),
     Finished(Result<String, String>),
-    /// A Porthole update was found — the UI should ask before installing.
+    /// A Shiphand update was found — the UI should ask before installing.
     UpdateAvailable(crate::selfupdate::ReleaseInfo),
 }
 
@@ -874,7 +874,7 @@ pub fn setup_vpn(
     if !yml.contains("gluetun:") {
         anyhow::bail!("gluetun not in the override — re-run Setup with a local profile");
     }
-    // Patch the placeholder env vars Porthole generated.
+    // Patch the placeholder env vars Shiphand generated.
     yml = yml.replace(
         "- VPN_SERVICE_PROVIDER=",
         &format!("- VPN_SERVICE_PROVIDER={provider}"),
@@ -904,7 +904,7 @@ pub fn setup_vpn(
 }
 
 /// Set a permanent qBittorrent password and return it.
-/// qBittorrent 5.x prints a random temp password on first run; Porthole
+/// qBittorrent 5.x prints a random temp password on first run; Shiphand
 /// reads it from the logs, then uses the WebUI API to set a permanent
 /// one (the API takes plaintext and hashes server-side).
 pub fn setup_qbit_password(tx: &Sender<CareEvent>) -> Result<String> {
@@ -1078,7 +1078,7 @@ pub fn setup_cloud_storage(
 
     // Mount service (user enables it after `rclone config`).
     let svc = crate::storage_cloud::render_mount_service(install_dir, 20);
-    let svc_path = rclone_dir.join("porthole-rclone.service");
+    let svc_path = rclone_dir.join("shiphand-rclone.service");
     std::fs::write(&svc_path, svc)?;
     log("[ok] mount service generated");
 
@@ -1087,8 +1087,8 @@ pub fn setup_cloud_storage(
     log("     and authorize your cloud under [cloud].");
     log("  2. Back up rclone.conf (encrypted) in TWO places.");
     log("     Losing the crypt password = library unrecoverable.");
-    log("  3. Then: sudo cp <install>/configs/rclone/porthole-rclone.service /etc/systemd/system/");
-    log("     sudo systemctl enable --now porthole-rclone");
+    log("  3. Then: sudo cp <install>/configs/rclone/shiphand-rclone.service /etc/systemd/system/");
+    log("     sudo systemctl enable --now shiphand-rclone");
     Ok(password)
 }
 
@@ -1110,19 +1110,19 @@ pub fn setup_upload_mover(install_dir: &Path, tx: &Sender<CareEvent>) -> Result<
     }
 
     let timer = crate::storage_cloud::render_mover_timer();
-    let timer_path = rclone_dir.join("porthole-mover.timer");
+    let timer_path = rclone_dir.join("shiphand-mover.timer");
     std::fs::write(&timer_path, timer)?;
     // The service the timer triggers (simple oneshot).
     let svc = format!(
-        "[Unit]\nDescription=Porthole cloud upload mover\n\n[Service]\nType=oneshot\nExecStart={}\n",
+        "[Unit]\nDescription=Shiphand cloud upload mover\n\n[Service]\nType=oneshot\nExecStart={}\n",
         script_path.display()
     );
-    std::fs::write(rclone_dir.join("porthole-mover.service"), svc)?;
+    std::fs::write(rclone_dir.join("shiphand-mover.service"), svc)?;
 
     log("[ok] mover script + timer generated");
     log("[in] to activate:");
-    log("  sudo cp <install>/configs/rclone/porthole-mover.* /etc/systemd/system/");
-    log("  sudo systemctl enable --now porthole-mover.timer");
+    log("  sudo cp <install>/configs/rclone/shiphand-mover.* /etc/systemd/system/");
+    log("  sudo systemctl enable --now shiphand-mover.timer");
     Ok(())
 }
 
@@ -1136,21 +1136,21 @@ pub fn setup_scheduled_backups(install_dir: &Path, tx: &Sender<CareEvent>) -> Re
     // with a timestamp, keeping the 7 newest.
     let script = format!(
         r#"#!/bin/bash
-# Porthole scheduled backup — generated, do not edit by hand.
+# Shiphand scheduled backup — generated, do not edit by hand.
 set -euo pipefail
 INSTALL="{install}"
-DEST="$HOME/.local/share/porthole/backups"
+DEST="$HOME/.local/share/shiphand/backups"
 mkdir -p "$DEST"
 TS=$(date +%Y%m%d-%H%M%S-%N)
-tar -czf "$DEST/porthole-backup-$TS.tar.gz" \
+tar -czf "$DEST/shiphand-backup-$TS.tar.gz" \
     --exclude="$(basename "$INSTALL")/data" \
     -C "$(dirname "$INSTALL")" "$(basename "$INSTALL")"
 # Keep the 7 newest, delete the rest.
-ls -t "$DEST"/porthole-backup-*.tar.gz 2>/dev/null | tail -n +8 | xargs -r rm --
+ls -t "$DEST"/shiphand-backup-*.tar.gz 2>/dev/null | tail -n +8 | xargs -r rm --
 "#,
         install = install_dir.display()
     );
-    let script_path = install_dir.join("configs/porthole-backup.sh");
+    let script_path = install_dir.join("configs/shiphand-backup.sh");
     if let Some(p) = script_path.parent() {
         std::fs::create_dir_all(p)?;
     }
@@ -1161,18 +1161,18 @@ ls -t "$DEST"/porthole-backup-*.tar.gz 2>/dev/null | tail -n +8 | xargs -r rm --
         let _ = std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755));
     }
 
-    let timer = "[Unit]\nDescription=Porthole daily backup\n\n[Timer]\nOnCalendar=daily\nPersistent=true\n\n[Install]\nWantedBy=timers.target\n";
+    let timer = "[Unit]\nDescription=Shiphand daily backup\n\n[Timer]\nOnCalendar=daily\nPersistent=true\n\n[Install]\nWantedBy=timers.target\n";
     let svc = format!(
-        "[Unit]\nDescription=Porthole scheduled backup\n\n[Service]\nType=oneshot\nExecStart={}\n",
+        "[Unit]\nDescription=Shiphand scheduled backup\n\n[Service]\nType=oneshot\nExecStart={}\n",
         script_path.display()
     );
-    std::fs::write(install_dir.join("configs/porthole-backup.timer"), timer)?;
-    std::fs::write(install_dir.join("configs/porthole-backup.service"), svc)?;
+    std::fs::write(install_dir.join("configs/shiphand-backup.timer"), timer)?;
+    std::fs::write(install_dir.join("configs/shiphand-backup.service"), svc)?;
 
     log("[ok] daily backup timer generated");
     log("[in] to activate:");
-    log("  sudo cp <install>/configs/porthole-backup.* /etc/systemd/system/");
-    log("  sudo systemctl enable --now porthole-backup.timer");
+    log("  sudo cp <install>/configs/shiphand-backup.* /etc/systemd/system/");
+    log("  sudo systemctl enable --now shiphand-backup.timer");
     log("[note] keeps the 7 newest backups, deletes older ones");
     Ok(())
 }
@@ -1320,7 +1320,7 @@ mod tests {
     #[test]
     fn backup_and_restore_round_trip() {
         let _guard = BACKUP_LOCK.lock().unwrap();
-        let base = std::env::temp_dir().join(format!("porthole-care-test-{}", timestamp()));
+        let base = std::env::temp_dir().join(format!("shiphand-care-test-{}", timestamp()));
         let install = base.join("stack");
         std::fs::create_dir_all(install.join("configs/sonarr")).unwrap();
         std::fs::write(install.join(".env"), "SECRET=shh\n").unwrap();
@@ -1358,7 +1358,7 @@ mod tests {
     #[test]
     fn small_disk_mode_merges_into_existing_config() {
         let _guard = BACKUP_LOCK.lock().unwrap();
-        let base = std::env::temp_dir().join("porthole-sd-test");
+        let base = std::env::temp_dir().join("shiphand-sd-test");
         let _ = std::fs::remove_dir_all(&base);
         let cfg_dir = base.join("configs/decypharr");
         std::fs::create_dir_all(&cfg_dir).unwrap();
@@ -1396,7 +1396,7 @@ mod tests {
 
     #[test]
     fn small_disk_mode_refuses_without_config() {
-        let base = std::env::temp_dir().join("porthole-sd-missing");
+        let base = std::env::temp_dir().join("shiphand-sd-missing");
         let _ = std::fs::remove_dir_all(&base);
         std::fs::create_dir_all(&base).unwrap();
         let (tx, _rx) = mpsc::channel();
@@ -1407,7 +1407,7 @@ mod tests {
     #[test]
     fn strm_mode_sets_strm_and_drops_mount() {
         let _guard = BACKUP_LOCK.lock().unwrap();
-        let base = std::env::temp_dir().join("porthole-sd-strm-test");
+        let base = std::env::temp_dir().join("shiphand-sd-strm-test");
         let _ = std::fs::remove_dir_all(&base);
         let cfg_dir = base.join("configs/decypharr");
         std::fs::create_dir_all(&cfg_dir).unwrap();
@@ -1437,7 +1437,7 @@ mod tests {
 
     #[test]
     fn small_disk_active_detects_modes() {
-        let base = std::env::temp_dir().join("porthole-sd-active-test");
+        let base = std::env::temp_dir().join("shiphand-sd-active-test");
         let _ = std::fs::remove_dir_all(&base);
         let cfg_dir = base.join("configs/decypharr");
         std::fs::create_dir_all(&cfg_dir).unwrap();

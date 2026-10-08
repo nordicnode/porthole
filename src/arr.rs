@@ -1,7 +1,7 @@
-//! *arr API integration: the wiring Porthole owns.
+//! *arr API integration: the wiring Shiphand owns.
 //!
 //! The installer sets up the initial download-client and Prowlarr links.
-//! Porthole verifies they stay correct and re-syncs when they drift:
+//! Shiphand verifies they stay correct and re-syncs when they drift:
 //! - Decypharr as the download client (QBittorrent mock, username = the
 //!   *arr's own URL, password = the *arr's API key — callback routing,
 //!   not auth). Mirrors the installer's exact payload.
@@ -277,7 +277,7 @@ pub fn prowlarr_resync(
     let indexers = api_get(9696, &api_key, "v1", "/indexer").unwrap_or_default();
     if indexers.trim() == "[]" || indexers.trim().is_empty() {
         log("[warn] Prowlarr has no indexers configured yet — add some in its UI first");
-        log("       (Porthole will ask for indexer credentials in a later phase)");
+        log("       (Shiphand will ask for indexer credentials in a later phase)");
         return Ok(());
     }
     log("[in] asking Prowlarr to re-sync its indexers into Sonarr/Radarr…");

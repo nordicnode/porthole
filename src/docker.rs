@@ -20,7 +20,7 @@ pub enum ServiceStatus {
     Unknown,
 }
 
-/// Container names Porthole manages (mirrors docker-compose.yml).
+/// Container names Shiphand manages (mirrors docker-compose.yml).
 /// Matches `Service::id` in services.rs for the eight local services.
 pub const CONTAINERS: &[&str] = &[
     "decypharr",
@@ -142,10 +142,10 @@ pub fn exec(container: &str, args: &[&str]) -> Result<String, String> {
     }
 }
 
-/// Porthole's own data dir: installer checkouts, etc.
+/// Shiphand's own data dir: installer checkouts, etc.
 pub fn data_dir() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    PathBuf::from(home).join(".local/share/porthole")
+    PathBuf::from(home).join(".local/share/shiphand")
 }
 
 #[cfg(test)]

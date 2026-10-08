@@ -1,4 +1,4 @@
-//! Porthole's own config: small things worth remembering between runs,
+//! Shiphand's own config: small things worth remembering between runs,
 //! like where the fleet was installed.
 
 use std::path::PathBuf;
@@ -20,7 +20,7 @@ pub struct Config {
 
 pub fn config_path() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    PathBuf::from(home).join(".config/porthole/config.json")
+    PathBuf::from(home).join(".config/shiphand/config.json")
 }
 
 pub fn load() -> Config {

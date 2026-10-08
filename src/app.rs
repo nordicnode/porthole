@@ -85,7 +85,7 @@ impl WizardState {
             form_selected: 0,
             form_errors: Vec::new(),
             step_status: vec![StepStatus::Pending; STEPS.len()],
-            logs: vec!["Answer three questions and Porthole does the rest.".to_string()],
+            logs: vec!["Answer three questions and Shiphand does the rest.".to_string()],
             tick: 0,
             rx: None,
         }
@@ -386,14 +386,14 @@ impl DoctorState {
         match &config.install_dir {
             Some(dir) => checks.push(Check {
                 name: "Install location".to_string(),
-                message: format!("Porthole remembers your fleet lives at {dir}."),
+                message: format!("Shiphand remembers your fleet lives at {dir}."),
                 status: CheckStatus::Pass,
                 fix: None,
                 fix_label: String::new(),
             }),
             None => checks.push(Check {
                 name: "Install location".to_string(),
-                message: "Porthole doesn't know where your fleet was installed yet. Run the Setup wizard once and it'll remember.".to_string(),
+                message: "Shiphand doesn't know where your fleet was installed yet. Run the Setup wizard once and it'll remember.".to_string(),
                 status: CheckStatus::Warn,
                 fix: None,
                 fix_label: String::new(),
@@ -507,7 +507,7 @@ impl DoctorState {
                 } else {
                     checks.push(Check {
                         name: "Cloud storage".to_string(),
-                        message: "The cloud mount isn't answering — your library may look empty. (Try: sudo systemctl restart porthole-rclone.)".to_string(),
+                        message: "The cloud mount isn't answering — your library may look empty. (Try: sudo systemctl restart shiphand-rclone.)".to_string(),
                         status: CheckStatus::Fail,
                         fix: None,
                         fix_label: String::new(),
@@ -515,7 +515,7 @@ impl DoctorState {
                 }
                 // Mover timer check.
                 let timer_on = std::process::Command::new("systemctl")
-                    .args(["is-active", "porthole-mover.timer"])
+                    .args(["is-active", "shiphand-mover.timer"])
                     .output()
                     .map(|o| {
                         o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "active"
@@ -552,7 +552,7 @@ impl DoctorState {
                 // Full verification lives in Care; here we just detect drift.
                 // What counts as "wired" depends on the fleet profile.
                 let profile =
-                    std::fs::read_to_string(install.join(".porthole-profile")).unwrap_or_default();
+                    std::fs::read_to_string(install.join(".shiphand-profile")).unwrap_or_default();
                 let needs_local = profile
                     .lines()
                     .next()
@@ -629,13 +629,13 @@ impl DoctorState {
             "radarr",
             "seerr",
         ];
-        // Which media server did the user pick? (From .porthole-profile,
+        // Which media server did the user pick? (From .shiphand-profile,
         // falling back to whichever container exists.)
         let profile_media = config
             .install_dir
             .as_ref()
             .and_then(|d| {
-                std::fs::read_to_string(std::path::Path::new(d).join(".porthole-profile")).ok()
+                std::fs::read_to_string(std::path::Path::new(d).join(".shiphand-profile")).ok()
             })
             .and_then(|c| c.lines().nth(2).map(|s| s.to_string()));
         let plex_exists = statuses.contains_key("plex");
@@ -821,8 +821,8 @@ pub enum CareOp {
     UploadMover,
     HardlinkTest,
     CheckUpdates,
-    CheckPortholeUpdate,
-    InstallPortholeUpdate(crate::selfupdate::ReleaseInfo),
+    CheckShiphandUpdate,
+    InstallShiphandUpdate(crate::selfupdate::ReleaseInfo),
     UpdateFleet,
     Uninstall,
 }
@@ -846,8 +846,8 @@ impl CareOp {
             CareOp::UploadMover => "Set up automatic uploads",
             CareOp::HardlinkTest => "Test hardlinks",
             CareOp::CheckUpdates => "Check for updates",
-            CareOp::CheckPortholeUpdate => "Check for Porthole updates",
-            CareOp::InstallPortholeUpdate(_) => "Install Porthole update",
+            CareOp::CheckShiphandUpdate => "Check for Shiphand updates",
+            CareOp::InstallShiphandUpdate(_) => "Install Shiphand update",
             CareOp::UpdateFleet => "Update fleet",
             CareOp::Uninstall => "Uninstall fleet",
         }
@@ -861,7 +861,7 @@ impl CareOp {
             }
             CareOp::Restore(_) => "Bring back a snapshot. Your fleet returns to exactly how it was.",
             CareOp::RegenConfigs => {
-                "Rewrite all config files with Porthole's native generator. Fixes corrupted configs; secrets are preserved."
+                "Rewrite all config files with Shiphand's native generator. Fixes corrupted configs; secrets are preserved."
             }
             CareOp::SmallDisk => {
                 "Mount the debrid cloud as a filesystem and make imports instant symlinks. Your library lives remotely; this disk only holds a small stream cache."
@@ -879,10 +879,10 @@ impl CareOp {
                 "Sync the TRaSH Guides' quality profiles into Sonarr and Radarr. Reverts hand-edits by design."
             }
             CareOp::Extras(_) => {
-                "Tick music, subtitles, sports, racing — Porthole starts, stops and wires them."
+                "Tick music, subtitles, sports, racing — Shiphand starts, stops and wires them."
             }
             CareOp::VpnSetup(_, _) => {
-                "Enter your VPN login (PIA or Proton VPN). Porthole routes downloads through it with a kill switch."
+                "Enter your VPN login (PIA or Proton VPN). Shiphand routes downloads through it with a kill switch."
             }
 
             CareOp::LocalClients => {
@@ -900,14 +900,14 @@ impl CareOp {
             CareOp::CheckUpdates => {
                 "See if any service has a new version. Downloads, but changes nothing."
             }
-            CareOp::CheckPortholeUpdate => {
-                "See if a new Porthole itself is out. Nothing changes until you say so."
+            CareOp::CheckShiphandUpdate => {
+                "See if a new Shiphand itself is out. Nothing changes until you say so."
             }
-            CareOp::InstallPortholeUpdate(_) => "Replace this Porthole with the new release.",
+            CareOp::InstallShiphandUpdate(_) => "Replace this Shiphand with the new release.",
             CareOp::UpdateFleet => {
                 "Back up, update everything, check health, roll back automatically if it breaks."
             }
-            CareOp::Uninstall => "Remove everything Porthole installed. The point of no return.",
+            CareOp::Uninstall => "Remove everything Shiphand installed. The point of no return.",
         }
     }
 
@@ -918,19 +918,19 @@ impl CareOp {
             .unwrap_or_else(|| "(not set)".to_string());
         match self {
             CareOp::Backup => vec![
-                "Porthole will save:".to_string(),
+                "Shiphand will save:".to_string(),
                 format!("  • everything in {dir} except your media data"),
-                "to ~/.local/share/porthole/backups/ as a timestamped archive.".to_string(),
+                "to ~/.local/share/shiphand/backups/ as a timestamped archive.".to_string(),
                 "Your media data isn't included — it's re-fetchable from the cloud.".to_string(),
             ],
             CareOp::ScheduledBackups => vec![
-                "Porthole will generate a daily systemd timer that:".to_string(),
+                "Shiphand will generate a daily systemd timer that:".to_string(),
                 "  • backs up your configs (excluding media data)".to_string(),
                 "  • keeps the 7 newest backups, deletes older ones".to_string(),
                 "You'll install it with sudo (instructions shown after).".to_string(),
             ],
             CareOp::Restore(p) => vec![
-                "Porthole will:".to_string(),
+                "Shiphand will:".to_string(),
                 "  • stop your fleet".to_string(),
                 format!(
                     "  • replace your configs with the backup '{}'",
@@ -940,13 +940,13 @@ impl CareOp {
                     .to_string(),
             ],
             CareOp::RegenConfigs => vec![
-                "Porthole will:".to_string(),
+                "Shiphand will:".to_string(),
                 "  • take a backup first".to_string(),
                 "  • rewrite .env, the Decypharr config and the three *arr configs".to_string(),
                 "  • keep your existing API keys and passwords".to_string(),
             ],
             CareOp::SmallDisk => vec![
-                "Porthole will:".to_string(),
+                "Shiphand will:".to_string(),
                 "  • take a backup first".to_string(),
                 "  • turn on Decypharr's DFS mount (the debrid cloud appears as a folder)"
                     .to_string(),
@@ -955,7 +955,7 @@ impl CareOp {
                 "Restart Decypharr afterwards for the mount to take effect.".to_string(),
             ],
             CareOp::SmallDiskStrm => vec![
-                "Porthole will:".to_string(),
+                "Shiphand will:".to_string(),
                 "  • take a backup first".to_string(),
                 "  • switch new downloads to .strm files (no mount needed)".to_string(),
                 "  • remove the DFS mount config if one exists".to_string(),
@@ -963,7 +963,7 @@ impl CareOp {
                     .to_string(),
             ],
             CareOp::MediaServerTune => vec![
-                "Porthole will:".to_string(),
+                "Shiphand will:".to_string(),
                 "  • detect whether you run Plex or Jellyfin".to_string(),
                 "  • Plex: turn off empty-trash-automatically, preview thumbnails,".to_string(),
                 "    chapter images, intro markers, loudness analysis, periodic scans".to_string(),
@@ -971,12 +971,12 @@ impl CareOp {
                     .to_string(),
             ],
             CareOp::SpeedTest => vec![
-                "Porthole will download about 25 MB from Cloudflare's speed-test".to_string(),
+                "Shiphand will download about 25 MB from Cloudflare's speed-test".to_string(),
                 "endpoint and tell you what streaming quality your connection".to_string(),
                 "can honestly handle. Nothing else changes.".to_string(),
             ],
             CareOp::QualityProfiles => vec![
-                "Porthole will:".to_string(),
+                "Shiphand will:".to_string(),
                 "  • generate Configarr's config from your quality answer".to_string(),
                 "  • run Configarr to sync TRaSH profiles, custom formats and naming".to_string(),
                 "  • verify the new profiles landed in Sonarr and Radarr".to_string(),
@@ -984,27 +984,27 @@ impl CareOp {
             ],
             CareOp::Extras(_) => vec!["Apply your extra-services selection.".to_string()],
             CareOp::CheckUpdates => vec![
-                "Porthole will download the latest images and tell you what's new.".to_string(),
+                "Shiphand will download the latest images and tell you what's new.".to_string(),
                 "Nothing restarts. Nothing changes.".to_string(),
             ],
-            CareOp::CheckPortholeUpdate => vec![
-                "Porthole will ask GitHub if a new release is out.".to_string(),
+            CareOp::CheckShiphandUpdate => vec![
+                "Shiphand will ask GitHub if a new release is out.".to_string(),
                 "Nothing downloads until you say so.".to_string(),
             ],
-            CareOp::InstallPortholeUpdate(rel) => vec![
+            CareOp::InstallShiphandUpdate(rel) => vec![
                 format!(
-                    "Porthole {} is available (you're running v{}).",
+                    "Shiphand {} is available (you're running v{}).",
                     rel.tag,
                     crate::selfupdate::CURRENT_VERSION
                 ),
-                "Porthole will:".to_string(),
+                "Shiphand will:".to_string(),
                 "  • download the new release".to_string(),
                 "  • verify its checksum before touching anything".to_string(),
                 "  • swap the binary (your settings are kept)".to_string(),
-                "You'll restart Porthole yourself afterwards.".to_string(),
+                "You'll restart Shiphand yourself afterwards.".to_string(),
             ],
             CareOp::UpdateFleet => vec![
-                "Porthole will:".to_string(),
+                "Shiphand will:".to_string(),
                 "  1. back up your configs".to_string(),
                 "  2. download updates".to_string(),
                 "  3. restart everything".to_string(),
@@ -1012,37 +1012,37 @@ impl CareOp {
                 "  5. roll back automatically if anything breaks".to_string(),
             ],
             CareOp::VpnSetup(provider, _) => vec![
-                "Porthole will:".to_string(),
+                "Shiphand will:".to_string(),
                 format!("  • configure gluetun for {provider} (WireGuard)"),
                 "  • restart gluetun (takes ~30s)".to_string(),
                 "Your key is written to the compose override, never logged.".to_string(),
             ],
             CareOp::LocalClients => vec![
-                "Porthole will:".to_string(),
+                "Shiphand will:".to_string(),
                 "  • set a permanent qBittorrent password (shown once)".to_string(),
                 "  • set SABnzbd's API key and port".to_string(),
                 "  • wire both into Sonarr/Radarr as download clients".to_string(),
             ],
             CareOp::CloudStorage(backend) => vec![
-                "Porthole will:".to_string(),
+                "Shiphand will:".to_string(),
                 format!("  • generate an rclone config for {}", backend.label()),
                 "  • wrap it in encryption (crypt) — the cloud sees ciphertext only".to_string(),
                 "  • generate a mount service with media-tuned settings".to_string(),
                 "You authorize it once with `rclone config`. Back up the config!".to_string(),
             ],
             CareOp::UploadMover => vec![
-                "Porthole will:".to_string(),
+                "Shiphand will:".to_string(),
                 "  • install a timer: every 30 min, move finished downloads to cloud".to_string(),
                 "  • skip files newer than 15 min, cap bandwidth daytime".to_string(),
                 "  • pause (not error) on Google's 750 GB/day limit".to_string(),
             ],
             CareOp::HardlinkTest => vec![
-                "Porthole will:".to_string(),
+                "Shiphand will:".to_string(),
                 "  • test hardlinking inside a running *arr container".to_string(),
                 "Read-only. Takes 2 seconds.".to_string(),
             ],
             CareOp::Uninstall => {
-                let mut lines = vec!["Porthole will remove:".to_string()];
+                let mut lines = vec!["Shiphand will remove:".to_string()];
                 lines.extend(crate::care::uninstall_plan(std::path::Path::new(&dir)));
                 lines.push("This cannot be undone.".to_string());
                 lines.push("Your cloud media (TorBox) is untouched.".to_string());
@@ -1069,7 +1069,7 @@ pub(crate) const CARE_ACTIONS: &[fn() -> CareOp] = &[
     || CareOp::UploadMover,
     || CareOp::HardlinkTest,
     || CareOp::CheckUpdates,
-    || CareOp::CheckPortholeUpdate,
+    || CareOp::CheckShiphandUpdate,
     || CareOp::UpdateFleet,
     || CareOp::Uninstall,
 ];
@@ -1169,7 +1169,7 @@ impl CareState {
                 crate::care::CareEvent::Log(line) => self.push_log(line),
                 crate::care::CareEvent::UpdateAvailable(rel) => {
                     self.rx = None;
-                    self.pending_op = Some(CareOp::InstallPortholeUpdate(rel));
+                    self.pending_op = Some(CareOp::InstallShiphandUpdate(rel));
                     self.confirm_armed = false;
                     self.view = CareView::Confirm;
                 }
@@ -1388,14 +1388,14 @@ fn run_care_op(
 ) {
     // Self-update check is special: when an update is found we hand control
     // to the confirm screen instead of finishing.
-    if matches!(op, CareOp::CheckPortholeUpdate) {
+    if matches!(op, CareOp::CheckShiphandUpdate) {
         match crate::selfupdate::check_for_update() {
             Ok(Some(rel)) => {
                 let _ = tx.send(crate::care::CareEvent::UpdateAvailable(rel));
             }
             Ok(None) => {
                 let _ = tx.send(crate::care::CareEvent::Finished(Ok(
-                    "You're running the latest Porthole.".to_string(),
+                    "You're running the latest Shiphand.".to_string(),
                 )));
             }
             Err(e) => {
@@ -1407,7 +1407,7 @@ fn run_care_op(
     let dir = || -> anyhow::Result<String> {
         install_dir.clone().ok_or_else(|| {
             anyhow::anyhow!(
-                "Porthole doesn't know where your fleet lives yet — run the Setup wizard once."
+                "Shiphand doesn't know where your fleet lives yet — run the Setup wizard once."
             )
         })
     };
@@ -1483,7 +1483,7 @@ fn run_care_op(
             let d = dir()?;
             // Quality answer: prefer the saved install-time choice; fall back to 1080p.
             let four_k =
-                std::fs::read_to_string(std::path::Path::new(&d).join(".porthole-quality"))
+                std::fs::read_to_string(std::path::Path::new(&d).join(".shiphand-quality"))
                     .map(|s| s.trim() == "4k")
                     .unwrap_or(false);
             crate::care::apply_quality_profiles(std::path::Path::new(&d), four_k, &tx)?;
@@ -1562,17 +1562,17 @@ fn run_care_op(
                 "Download clients wired. qBittorrent password (save this): {qbit_pw}"
             ))
         }
-        CareOp::CheckPortholeUpdate => {
+        CareOp::CheckShiphandUpdate => {
             unreachable!("handled above")
         }
-        CareOp::InstallPortholeUpdate(rel) => {
+        CareOp::InstallShiphandUpdate(rel) => {
             let msg = crate::selfupdate::install_update(&rel)?;
             Ok(msg)
         }
         CareOp::Uninstall => {
             let d = dir()?;
             crate::care::uninstall(std::path::Path::new(&d), &tx)?;
-            Ok("Fleet uninstalled. Thanks for sailing with Porthole.".to_string())
+            Ok("Fleet uninstalled. Thanks for sailing with Shiphand.".to_string())
         }
     })();
     let _ = tx.send(crate::care::CareEvent::Finished(
@@ -1629,7 +1629,7 @@ impl App {
         app
     }
 
-    /// Check for a Porthole update at most once a day, in the background.
+    /// Check for a Shiphand update at most once a day, in the background.
     /// Silent on failure — this must never interrupt startup.
     #[cfg_attr(test, allow(dead_code))]
     fn maybe_check_for_update(&mut self) {
@@ -1726,7 +1726,7 @@ impl App {
                 self.update_rx = None;
                 if let Ok(Some(rel)) = r {
                     self.flash = Some(format!(
-                        "Porthole {} is available — see Care → Check for Porthole updates",
+                        "Shiphand {} is available — see Care → Check for Shiphand updates",
                         rel.tag
                     ));
                 }

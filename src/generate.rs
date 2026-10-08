@@ -1,4 +1,4 @@
-//! Native config generation: Porthole writes the fleet's config files itself,
+//! Native config generation: Shiphand writes the fleet's config files itself,
 //! instead of shelling out for the deterministic parts.
 //!
 //! Every template here mirrors the TorBox-Media-Server installer's generators
@@ -404,7 +404,7 @@ pub fn render_arr_config(service: ArrService, api_key: &str) -> String {
 // ---------------------------------------------------------------------------
 
 /// Render the systemd unit. Mirrors `generate_systemd_service`.
-/// NOTE: installing it still needs root — Porthole writes the file for
+/// NOTE: installing it still needs root — Shiphand writes the file for
 /// review and offers the install command rather than sudo-ing silently.
 pub fn render_systemd_service(env_file: &str, install_dir: &str, docker_bin: &str) -> String {
     format!(
@@ -572,8 +572,8 @@ mod tests {
             pgid: "1000",
             tz: "UTC",
             torbox_api_key: "tbk-0123456789abcdef",
-            config_dir: "/home/u/porthole-stack/configs",
-            data_dir: "/home/u/porthole-stack/data",
+            config_dir: "/home/u/shiphand-stack/configs",
+            data_dir: "/home/u/shiphand-stack/data",
             mount_dir: "/mnt/torbox-media",
             media_server: "plex",
             plex_claim: "",
@@ -635,8 +635,8 @@ mod tests {
             TORBOX_API_KEY=\"tbk-0123456789abcdef\"\n\
             \n\
             # Paths\n\
-            CONFIG_DIR=\"/home/u/porthole-stack/configs\"\n\
-            DATA_DIR=\"/home/u/porthole-stack/data\"\n\
+            CONFIG_DIR=\"/home/u/shiphand-stack/configs\"\n\
+            DATA_DIR=\"/home/u/shiphand-stack/data\"\n\
             MOUNT_DIR=\"/mnt/torbox-media\"\n\
             \n\
             # Docker Compose Profile (activates only the selected media server)\n\
@@ -717,15 +717,15 @@ mod tests {
     #[test]
     fn systemd_unit_matches_installer() {
         let got = render_systemd_service(
-            "/home/u/porthole-stack/.env",
-            "/home/u/porthole-stack",
+            "/home/u/shiphand-stack/.env",
+            "/home/u/shiphand-stack",
             "/usr/bin/docker",
         );
         assert!(got.contains("[Unit]"));
-        assert!(got.contains("EnvironmentFile=/home/u/porthole-stack/.env"));
+        assert!(got.contains("EnvironmentFile=/home/u/shiphand-stack/.env"));
         assert!(got.contains("findmnt -n '$MOUNT_DIR'"));
         assert!(got.contains("WantedBy=multi-user.target"));
-        assert!(got.contains("WorkingDirectory=\"/home/u/porthole-stack\""));
+        assert!(got.contains("WorkingDirectory=\"/home/u/shiphand-stack\""));
     }
 
     #[test]

@@ -2,7 +2,7 @@
 //! then orchestrates the proven TorBox-Media-Server installer with live logs.
 //!
 //! Design: orchestrate, don't rewrite. The shell installer is battle-tested
-//! (55 stars, real users); Porthole drives it non-interactively
+//! (55 stars, real users); Shiphand drives it non-interactively
 //! (`setup.sh --yes` + env vars) and streams its output into the UI.
 
 use std::io::{BufRead, BufReader};
@@ -74,7 +74,7 @@ impl Default for Preferences {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
         Self {
             torbox_api_key: String::new(),
-            install_dir: format!("{home}/porthole-stack"),
+            install_dir: format!("{home}/shiphand-stack"),
             media_server: MediaServer::Plex,
             puid: "1000".to_string(),
             pgid: "1000".to_string(),
@@ -270,7 +270,7 @@ pub fn run_provision(prefs: Preferences, tx: Sender<ProvEvent>) {
     let log = |s: &str| send(ProvEvent::Log(s.to_string()));
 
     // Remember the quality answer for later re-runs (Care action).
-    let quality_path = std::path::Path::new(&prefs.install_dir).join(".porthole-quality");
+    let quality_path = std::path::Path::new(&prefs.install_dir).join(".shiphand-quality");
     if let Some(parent) = quality_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -279,7 +279,7 @@ pub fn run_provision(prefs: Preferences, tx: Sender<ProvEvent>) {
         if prefs.quality_4k { "4k\n" } else { "1080p\n" },
     );
     // Remember the download choices too (Doctor + Care need them).
-    let profile_path = std::path::Path::new(&prefs.install_dir).join(".porthole-profile");
+    let profile_path = std::path::Path::new(&prefs.install_dir).join(".shiphand-profile");
     let _ = std::fs::write(
         &profile_path,
         format!(

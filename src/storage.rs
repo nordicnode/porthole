@@ -1,7 +1,7 @@
 //! Small-disk helpers: how much local disk is free, and how much of it
 //! should be reserved for streaming cache and transcodes.
 //!
-//! Small-disk mode is Porthole's default architecture: files live in the
+//! Small-disk mode is Shiphand's default architecture: files live in the
 //! cloud, playback happens locally, and the local disk only holds a warm
 //! cache plus transcode temp space.
 

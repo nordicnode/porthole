@@ -1,4 +1,4 @@
-# Porthole v0.2.0 — Real-Hardware E2E Checklist
+# Shiphand v0.2.0 — Real-Hardware E2E Checklist
 
 Run on a real Linux host with Docker. Check off each item; note failures
 with the exact error and where it appeared (screen + log line).
@@ -14,7 +14,7 @@ with the exact error and where it appeared (screen + log line).
 
 ## 1. Fresh install — Debrid profile (default)
 
-- [ ] `./porthole` → welcome overlay → Enter → Setup
+- [ ] `./shiphand` → welcome overlay → Enter → Setup
 - [ ] Fill: TorBox API key, install dir (e.g. `~/media-fleet`), PUID/PGID
       (use `id -u` / `id -g`), TZ (e.g. `America/Los_Angeles`)
 - [ ] Toggles: Plex, Debrid fleet, TorBox provider, quality 1080p or 4K
@@ -23,13 +23,13 @@ with the exact error and where it appeared (screen + log line).
 - [ ] Provisioning completes; all steps green in the log
 - [ ] **PUID/PGID/TZ check**: `grep -E "PUID|PGID|TZ" <install>/.env`
       shows your values, NOT `0:0` / `Etc/UTC`
-      (a previous dry-run showed root/UTC despite Porthole passing env —
+      (a previous dry-run showed root/UTC despite Shiphand passing env —
       this is the item to re-verify)
 - [ ] `docker ps` shows: decypharr, prowlarr, byparr, sonarr, radarr,
       seerr, plex — all Up
 - [ ] Fleet view (`1`) shows all Running (not just "port open")
 - [ ] Plex web UI loads at `http://<host>:32400/web`
-- [ ] Seerr at `:5055` can see the *arrs (Porthole wires API keys)
+- [ ] Seerr at `:5055` can see the *arrs (Shiphand wires API keys)
 
 ## 2. Integration wiring
 
@@ -69,15 +69,15 @@ with the exact error and where it appeared (screen + log line).
 ## 6. Updates with rollback
 
 - [ ] Care → Check for updates → pull completes
-- [ ] If updates found: apply → images tagged `porthole-prev-*`
-      (`docker images | grep porthole-prev`)
+- [ ] If updates found: apply → images tagged `shiphand-prev-*`
+      (`docker images | grep shiphand-prev`)
 - [ ] After restart, health check waits for ALL services incl. extras
 - [ ] Simulate failure (e.g. `docker stop sonarr` mid-update) → rollback
       restores previous images and configs
 
 ## 7. Backup & restore
 
-- [ ] Care → Create backup → tarball in `~/.local/share/porthole/backups/`
+- [ ] Care → Create backup → tarball in `~/.local/share/shiphand/backups/`
 - [ ] Tarball excludes `data/` (media not duplicated)
 - [ ] Break something (edit `.env` badly) → Care → Restore → fleet recovers
 - [ ] Restore stops ALL containers first (incl. extras), not just base
@@ -103,7 +103,7 @@ with the exact error and where it appeared (screen + log line).
 
 ## 10. Self-update
 
-- [ ] Care → Check for Porthole updates → reports current when up to date
+- [ ] Care → Check for Shiphand updates → reports current when up to date
 - [ ] (After v0.2.1 exists) update downloads, verifies SHA256, swaps binary,
       keeps `.bak` until success
 

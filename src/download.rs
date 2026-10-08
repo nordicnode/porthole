@@ -47,10 +47,10 @@ impl FleetProfile {
     }
 }
 
-/// Read the fleet profile from <install>/.porthole-profile (line 1).
+/// Read the fleet profile from <install>/.shiphand-profile (line 1).
 /// Defaults to Debrid if missing/unreadable.
 pub fn read_fleet_profile(install_dir: &std::path::Path) -> FleetProfile {
-    let path = install_dir.join(".porthole-profile");
+    let path = install_dir.join(".shiphand-profile");
     if let Ok(content) = std::fs::read_to_string(&path) {
         match content.lines().next().unwrap_or("").trim() {
             "local" => FleetProfile::Local,
@@ -244,7 +244,7 @@ pub fn privacy_explainer() -> Vec<String> {
         "The kill switch (built into gluetun) cuts everything if the".to_string(),
         "VPN drops — nothing leaks onto your bare connection.".to_string(),
         "".to_string(),
-        "What Porthole does NOT do:".to_string(),
+        "What Shiphand does NOT do:".to_string(),
         "• No WARP toggle — Cloudflare would see everything instead of".to_string(),
         "  your ISP. That's not privacy, that's a change of watcher.".to_string(),
         "• Plex/Jellyfin stay off the VPN — remote streaming breaks".to_string(),

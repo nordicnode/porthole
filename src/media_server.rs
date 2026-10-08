@@ -12,7 +12,7 @@
 //! real Plex Preferences.xml files — never guess these.
 //!
 //! Jellyfin has no API key provisioned by the installer and no
-//! unauthenticated way to change settings, so for Jellyfin Porthole
+//! unauthenticated way to change settings, so for Jellyfin Shiphand
 //! reports exact manual steps instead of pretending.
 
 use std::path::Path;
@@ -170,7 +170,7 @@ mod tests {
 
     #[test]
     fn parses_plex_token_from_preferences_xml() {
-        let dir = std::env::temp_dir().join("porthole-plex-test");
+        let dir = std::env::temp_dir().join("shiphand-plex-test");
         let prefs_dir = dir.join("configs/plex/Library/Application Support/Plex Media Server");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&prefs_dir).unwrap();
@@ -185,7 +185,7 @@ mod tests {
 
     #[test]
     fn missing_token_is_an_honest_error() {
-        let dir = std::env::temp_dir().join("porthole-plex-missing");
+        let dir = std::env::temp_dir().join("shiphand-plex-missing");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         assert!(plex_token(&dir).is_err());
@@ -194,7 +194,7 @@ mod tests {
 
     #[test]
     fn detects_media_server_from_env() {
-        let dir = std::env::temp_dir().join("porthole-ms-detect");
+        let dir = std::env::temp_dir().join("shiphand-ms-detect");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join(".env"), "COMPOSE_PROFILES=jellyfin\n").unwrap();

@@ -1,4 +1,4 @@
-//! Porthole — your self-hosted media fleet through one window.
+//! Shiphand — your self-hosted media fleet through one window.
 //!
 //! A TUI that installs and, more importantly, *integrates* a complete
 //! self-hosted media stack: TorBox, Decypharr, Prowlarr, Byparr, Sonarr,
@@ -38,7 +38,7 @@ use app::App;
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "--version" || a == "-V") {
-        println!("porthole {}", selfupdate::CURRENT_VERSION);
+        println!("shiphand {}", selfupdate::CURRENT_VERSION);
         return Ok(());
     }
 

@@ -30,8 +30,8 @@ jobs:
       - name: Package
         run: |
           mkdir -p dist
-          tar czf "dist/porthole-x86_64-linux.tar.gz" -C target/release porthole
-          (cd dist && sha256sum porthole-x86_64-linux.tar.gz > SHA256SUMS)
+          tar czf "dist/shiphand-x86_64-linux.tar.gz" -C target/release shiphand
+          (cd dist && sha256sum shiphand-x86_64-linux.tar.gz > SHA256SUMS)
           cat dist/SHA256SUMS
 
       - name: Publish release
@@ -39,6 +39,6 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release create "${GITHUB_REF#refs/tags/}" \
-            dist/porthole-x86_64-linux.tar.gz dist/SHA256SUMS \
-            --title "Porthole ${GITHUB_REF#refs/tags/}" \
+            dist/shiphand-x86_64-linux.tar.gz dist/SHA256SUMS \
+            --title "Shiphand ${GITHUB_REF#refs/tags/}" \
             --generate-notes

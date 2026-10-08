@@ -1,4 +1,4 @@
-//! Porthole updates itself. Checks the GitHub releases for this repo,
+//! Shiphand updates itself. Checks the GitHub releases for this repo,
 //! downloads the matching build, verifies its checksum, and swaps the
 //! binary — no package manager, no expert knowledge.
 //!
@@ -12,7 +12,7 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 
 pub const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
-const REPO: &str = "nordicnode/porthole";
+const REPO: &str = "nordicnode/shiphand";
 
 #[derive(Debug, Clone)]
 pub struct ReleaseInfo {
@@ -39,7 +39,7 @@ pub fn target_triple() -> Result<&'static str> {
     match (std::env::consts::ARCH, std::env::consts::OS) {
         ("x86_64", "linux") => Ok("x86_64-linux"),
         ("aarch64", "linux") => Ok("aarch64-linux"),
-        (arch, os) => anyhow::bail!("Porthole doesn't ship builds for {arch}-{os} yet"),
+        (arch, os) => anyhow::bail!("Shiphand doesn't ship builds for {arch}-{os} yet"),
     }
 }
 
@@ -53,7 +53,7 @@ fn gh_api(url: &str) -> Result<String> {
             "--max-time",
             "20",
             "-H",
-            "User-Agent: porthole-selfupdate",
+            "User-Agent: shiphand-selfupdate",
             "-H",
             "Accept: application/vnd.github+json",
             url,
@@ -103,7 +103,7 @@ pub fn check_for_update() -> Result<Option<ReleaseInfo>> {
         return Ok(None);
     }
     let triple = target_triple()?;
-    let want = format!("porthole-{triple}.tar.gz");
+    let want = format!("shiphand-{triple}.tar.gz");
     let asset = rel
         .assets
         .iter()
@@ -129,7 +129,7 @@ fn download(url: &str, dest: &Path) -> Result<()> {
             "--max-time",
             "300",
             "-H",
-            "User-Agent: porthole-selfupdate",
+            "User-Agent: shiphand-selfupdate",
             "-o",
             &dest.to_string_lossy(),
             url,
@@ -143,7 +143,7 @@ fn download(url: &str, dest: &Path) -> Result<()> {
 }
 
 /// Download, verify, and install the release. Returns a message for the UI.
-/// The user restarts Porthole themselves — replacing the binary is enough.
+/// The user restarts Shiphand themselves — replacing the binary is enough.
 pub fn install_update(rel: &ReleaseInfo) -> Result<String> {
     let exe = std::env::current_exe().context("locating the running binary")?;
     let exe_s = exe.to_string_lossy();
@@ -154,7 +154,7 @@ pub fn install_update(rel: &ReleaseInfo) -> Result<String> {
     }
 
     let work = std::env::temp_dir().join(format!(
-        "porthole-update-{}",
+        "shiphand-update-{}",
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
@@ -207,9 +207,9 @@ pub fn install_update(rel: &ReleaseInfo) -> Result<String> {
         if !status.success() {
             anyhow::bail!("couldn't extract the release archive");
         }
-        let new_bin = work.join("porthole");
+        let new_bin = work.join("shiphand");
         if !new_bin.is_file() {
-            anyhow::bail!("the release archive didn't contain a porthole binary");
+            anyhow::bail!("the release archive didn't contain a shiphand binary");
         }
 
         // 4. Swap: current → backup, new → current. Restore on failure.
@@ -226,7 +226,7 @@ pub fn install_update(rel: &ReleaseInfo) -> Result<String> {
         }
         std::fs::remove_file(&backup).ok();
         Ok(format!(
-            "Porthole {} installed — restart Porthole to use it.",
+            "Shiphand {} installed — restart Shiphand to use it.",
             rel.tag
         ))
     })();

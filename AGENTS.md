@@ -1,10 +1,10 @@
-# AGENTS.md — Porthole
+# AGENTS.md — Shiphand
 
 Guidance for AI coding assistants working in this repo.
 
 ## What this is
 
-Porthole is a Rust TUI (ratatui) that installs and **integrates** a
+Shiphand is a Rust TUI (ratatui) that installs and **integrates** a
 self-hosted media stack: TorBox, Decypharr, Prowlarr, Byparr, Sonarr, Radarr,
 Seerr, Plex, Jellyfin. The product thesis: setup is 20% of the value,
 integration is 80%. See `ROADMAP.md` for phases.

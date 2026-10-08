@@ -51,7 +51,7 @@ pub fn render(f: &mut Frame, app: &App) {
     let banner = Paragraph::new(Line::from(vec![
         Span::styled("⛵ ", Style::default().fg(ACCENT)),
         Span::styled(
-            "PORTHOLE",
+            "SHIPHAND",
             Style::default()
                 .fg(Color::White)
                 .add_modifier(Modifier::BOLD),
@@ -132,7 +132,7 @@ pub fn render(f: &mut Frame, app: &App) {
             Style::default().fg(WARM).add_modifier(Modifier::BOLD),
         )]),
         None => Line::from(vec![Span::styled(
-            "Porthole — your fleet, wired together.",
+            "Shiphand — your fleet, wired together.",
             Style::default().fg(DIM),
         )]),
     };
@@ -174,7 +174,7 @@ fn render_welcome(f: &mut Frame, area: Rect) {
     let text = Text::from(vec![
         Line::from(""),
         Line::from(vec![Span::styled(
-            "⛵  Welcome to Porthole",
+            "⛵  Welcome to Shiphand",
             Style::default()
                 .fg(Color::White)
                 .add_modifier(Modifier::BOLD),
@@ -194,7 +194,7 @@ fn render_welcome(f: &mut Frame, area: Rect) {
         )]),
         Line::from(""),
         Line::from(vec![Span::styled(
-            "Porthole doesn't just install apps — it introduces them to each",
+            "Shiphand doesn't just install apps — it introduces them to each",
             Style::default().fg(Color::Gray),
         )]),
         Line::from(vec![Span::styled(
@@ -355,7 +355,7 @@ fn render_prefs(f: &mut Frame, app: &App, area: Rect) {
         form_row(
             "Install dir",
             &p.install_dir,
-            "Where Porthole keeps configs and containers",
+            "Where Shiphand keeps configs and containers",
             s == 1,
             false,
         ),
@@ -573,7 +573,7 @@ fn render_prefs(f: &mut Frame, app: &App, area: Rect) {
         .split(area);
 
     let list = List::new(rows).block(title_block(
-        "A few questions — Porthole does the hundred tiny configurations",
+        "A few questions — Shiphand does the hundred tiny configurations",
     ));
     f.render_widget(list, chunks[0]);
 
@@ -595,7 +595,7 @@ fn render_plan(f: &mut Frame, app: &App, area: Rect) {
     let w = &app.wizard;
     let mut lines: Vec<Line> = vec![
         Line::from(vec![Span::styled(
-            "Here's exactly what Porthole is about to do. Nothing runs until you say go.",
+            "Here's exactly what Shiphand is about to do. Nothing runs until you say go.",
             Style::default()
                 .fg(Color::White)
                 .add_modifier(Modifier::ITALIC),
@@ -606,7 +606,7 @@ fn render_plan(f: &mut Frame, app: &App, area: Rect) {
             Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
         )]),
         Line::from(vec![Span::styled(
-            "  bash setup.sh --yes   (in ~/.local/share/porthole/torbox-media-server)",
+            "  bash setup.sh --yes   (in ~/.local/share/shiphand/torbox-media-server)",
             Style::default().fg(Color::White),
         )]),
         Line::from(""),
@@ -766,14 +766,14 @@ fn render_progress(f: &mut Frame, app: &App, area: Rect) {
         })
         .collect();
     let log = Paragraph::new(Text::from(log_lines))
-        .block(title_block("What Porthole is doing"))
+        .block(title_block("What Shiphand is doing"))
         .wrap(Wrap { trim: false });
     f.render_widget(log, cols[1]);
 }
 
 fn render_integrations(f: &mut Frame, area: Rect) {
     let mut lines: Vec<Line> = vec![Line::from(vec![Span::styled(
-        "Porthole doesn't just install apps — it introduces them to each other.",
+        "Shiphand doesn't just install apps — it introduces them to each other.",
         Style::default()
             .fg(Color::White)
             .add_modifier(Modifier::ITALIC),
@@ -1272,7 +1272,7 @@ fn render_help(f: &mut Frame, app: &App, area: Rect) {
     let mut text = Text::from(vec![
         Line::from(""),
         Line::from(vec![Span::styled(
-            "Porthole in one paragraph",
+            "Shiphand in one paragraph",
             Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
         )]),
         Line::from(""),
@@ -1281,7 +1281,7 @@ fn render_help(f: &mut Frame, app: &App, area: Rect) {
             Style::default().fg(Color::White),
         )),
         Line::from(Span::styled(
-            "Porthole installs them, then wires them together: search sources shared,",
+            "Shiphand installs them, then wires them together: search sources shared,",
             Style::default().fg(Color::White),
         )),
         Line::from(Span::styled(
@@ -1289,7 +1289,7 @@ fn render_help(f: &mut Frame, app: &App, area: Rect) {
             Style::default().fg(Color::White),
         )),
         Line::from(Span::styled(
-            "three questions; Porthole does the hundred tiny configurations.",
+            "three questions; Shiphand does the hundred tiny configurations.",
             Style::default().fg(Color::White),
         )),
         Line::from(""),
@@ -1395,7 +1395,7 @@ mod tests {
         let mut app = App::new();
         app.show_welcome = true;
         let text = screen_text(&app, 100, 40);
-        assert!(text.contains("Welcome to Porthole"));
+        assert!(text.contains("Welcome to Shiphand"));
         assert!(text.contains("set up my fleet"));
         assert!(text.contains("look around first"));
     }

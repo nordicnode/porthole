@@ -1,6 +1,6 @@
 <div align="center">
 
-# ⛵ Porthole
+# ⛵ Shiphand
 
 **Your self-hosted media fleet, through one window.**
 
@@ -9,29 +9,29 @@ TorBox, Decypharr, Prowlarr, Byparr, Sonarr, Radarr, Lidarr, Bazarr, Sportarr,
 Seerr, Plex, Jellyfin, download clients, VPN, cloud storage, and companion
 automation — with no expert knowledge required.
 
-[![CI](https://github.com/nordicnode/porthole/actions/workflows/ci.yml/badge.svg)](https://github.com/nordicnode/porthole/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/nordicnode/porthole)](https://github.com/nordicnode/porthole/releases/latest)
+[![CI](https://github.com/nordicnode/shiphand/actions/workflows/ci.yml/badge.svg)](https://github.com/nordicnode/shiphand/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/nordicnode/shiphand)](https://github.com/nordicnode/shiphand/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 </div>
 
 > Dozens of apps make a great media server — but only if they talk to each other.
-> Porthole installs them, then **introduces them to each other**: search
+> Shiphand installs them, then **introduces them to each other**: search
 > sources shared, downloads handed off, libraries created, requests connected,
 > subtitles fetched, music organized, cloud storage mounted.
-> You answer a few questions; Porthole does the hundred tiny configurations.
+> You answer a few questions; Shiphand does the hundred tiny configurations.
 
 ## The idea
 
 The [TorBox-Media-Server](https://github.com/nordicnode/TorBox-Media-Server)
-scripts proved the stack works. Porthole is the next step: a beautiful
+scripts proved the stack works. Shiphand is the next step: a beautiful
 terminal UI that turns that stack into a *product* — one that a non-expert
 can set up and run.
 
 The core insight: **setup is 20% of the value, integration is 80%.** Anyone
 can `docker compose up` thirty containers. The hard part is the wiring in
 between — API keys synced, indexers shared, download clients assigned,
-libraries created, VPN routed, cloud storage mounted. Porthole does all of it,
+libraries created, VPN routed, cloud storage mounted. Shiphand does all of it,
 and shows you the wiring map so you can see (and trust) what was connected.
 
 ## Screens
@@ -40,10 +40,10 @@ and shows you the wiring map so you can see (and trust) what was connected.
 |------|--------------|
 | **Fleet** (`1`) | Every service at a glance with **live Docker status** — `s`/`x`/`R` to start/stop/restart |
 | **Setup** (`2`) | Guided wizard: preferences → dry-run plan → real provisioning with live logs |
-| **Wiring** (`3`) | The integration map — every connection Porthole makes, in plain words |
+| **Wiring** (`3`) | The integration map — every connection Shiphand makes, in plain words |
 | **Doctor** (`4`) | Fleet health checks in plain language, with one-key fixes |
-| **Care** (`5`) | Backups, one-key updates with automatic rollback, config regeneration, clean uninstall, Porthole self-updates |
-| **Logs** (`6`) | Everything Porthole is doing, streamed live |
+| **Care** (`5`) | Backups, one-key updates with automatic rollback, config regeneration, clean uninstall, Shiphand self-updates |
+| **Logs** (`6`) | Everything Shiphand is doing, streamed live |
 | **Help** (`?`) | Keyboard shortcuts, plain-language privacy and storage explainers |
 
 ## Quick start
@@ -55,14 +55,14 @@ cargo run --release
 Or grab the latest release (a single ~2MB binary, no dependencies):
 
 ```bash
-curl -fsSL -o porthole.tar.gz \
-  https://github.com/nordicnode/porthole/releases/latest/download/porthole-x86_64-linux.tar.gz
-tar xzf porthole.tar.gz
-./porthole
+curl -fsSL -o shiphand.tar.gz \
+  https://github.com/nordicnode/shiphand/releases/latest/download/shiphand-x86_64-linux.tar.gz
+tar xzf shiphand.tar.gz
+./shiphand
 ```
 
-Porthole checks for its own updates once a day and can install them from
-the Care view (`5` → *Check for Porthole updates*) — checksum-verified, no
+Shiphand checks for its own updates once a day and can install them from
+the Care view (`5` → *Check for Shiphand updates*) — checksum-verified, no
 package manager needed.
 
 Keys: `Tab` switch views · `↑↓` move · `Enter` start setup · `?` help · `q` quit.
@@ -80,7 +80,7 @@ Works over SSH — it's a TUI, so it runs wherever your server lives.
 - **Doctor**: plain-language health checks with one-key fixes
 - **Care**: timestamped backups (manual or daily scheduled), one-key updates
   with automatic rollback, config regeneration, small-disk mode, cloud
-  storage setup, VPN setup, clean uninstall, Porthole self-updates
+  storage setup, VPN setup, clean uninstall, Shiphand self-updates
   (checksum-verified)
 - **Extras**: Lidarr, Bazarr, Sportarr, autobrr + 8 companion apps
   (Unpackerr, Cleanuparr, Maintainerr, Janitorr, Tautulli, Jellystat,
